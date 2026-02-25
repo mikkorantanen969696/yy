@@ -6,12 +6,28 @@ from __future__ import annotations
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
+from aiogram.types.input_file import BufferedInputFile
 
 from app.config.settings import settings
+from app.services.analytics import count_orders, count_by_status, top_managers, top_masters
+from app.services.exports import export_basic, export_full
 from app.services.users import is_admin, set_role
 from app.utils.constants import ROLES
 
 router = Router()
+
+
+def _format_stats(total: int, by_status: dict[str, int]) -> str:
+    """Build a short stats message."""
+    return (
+        f"Всего заявок: {total}\n"
+        f"Создана: {by_status.get('created', 0)}\n"
+        f"Опубликована: {by_status.get('published', 0)}\n"
+        f"Назначена: {by_status.get('assigned', 0)}\n"
+        f"В процессе: {by_status.get('in_progress', 0)}\n"
+        f"Завершена: {by_status.get('completed', 0)}\n"
+        f"Отменена: {by_status.get('cancelled', 0)}\n"
+    )
 
 
 @router.message(Command("admin"))
@@ -21,9 +37,63 @@ async def cmd_admin(message: Message) -> None:
         await message.answer("Нет доступа.")
         return
     await message.answer(
-        "Админ-панель: в разработке.\n"
-        "Команда назначения ролей: /set_role <telegram_id> <admin|manager|master>"
+        "Админ-панель:\n"
+        "/stats - аналитика\n"
+        "/export_basic - экспорт CSV (основной)\n"
+        "/export_full - экспорт CSV (полный)\n"
+        "/set_role <telegram_id> <admin|manager|master>"
     )
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message, db) -> None:
+    """Show basic analytics."""
+    if not is_admin(message.from_user.id, settings.get_admin_ids()):
+        await message.answer("Нет доступа.")
+        return
+
+    total = await count_orders(db)
+    by_status = await count_by_status(db)
+    managers = await top_managers(db)
+    masters = await top_masters(db)
+
+    stats_text = _format_stats(total, by_status)
+
+    if managers:
+        stats_text += "\nТоп менеджеров:\n"
+        for mid, cnt in managers:
+            stats_text += f"- {mid}: {cnt}\n"
+
+    if masters:
+        stats_text += "\nТоп мастеров:\n"
+        for mid, cnt in masters:
+            stats_text += f"- {mid}: {cnt}\n"
+
+    await message.answer(stats_text)
+
+
+@router.message(Command("export_basic"))
+async def cmd_export_basic(message: Message, db) -> None:
+    """Send basic CSV export."""
+    if not is_admin(message.from_user.id, settings.get_admin_ids()):
+        await message.answer("Нет доступа.")
+        return
+
+    data = await export_basic(db)
+    file = BufferedInputFile(data, filename="orders_basic.csv")
+    await message.answer_document(file)
+
+
+@router.message(Command("export_full"))
+async def cmd_export_full(message: Message, db) -> None:
+    """Send full CSV export."""
+    if not is_admin(message.from_user.id, settings.get_admin_ids()):
+        await message.answer("Нет доступа.")
+        return
+
+    data = await export_full(db)
+    file = BufferedInputFile(data, filename="orders_full.csv")
+    await message.answer_document(file)
 
 
 @router.message(Command("set_role"))

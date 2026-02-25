@@ -29,6 +29,12 @@ async def get_order(session: AsyncSession, order_id: int) -> Order | None:
     return result.scalar_one_or_none()
 
 
+async def list_all_orders(session: AsyncSession) -> list[Order]:
+    """List all orders (admin)."""
+    result = await session.execute(select(Order))
+    return list(result.scalars().all())
+
+
 async def list_orders_by_manager(session: AsyncSession, manager_id: int) -> list[Order]:
     """List orders created by manager."""
     result = await session.execute(select(Order).where(Order.manager_id == manager_id))
