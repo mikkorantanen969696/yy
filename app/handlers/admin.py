@@ -11,7 +11,7 @@ from aiogram.types.input_file import BufferedInputFile
 from app.config.settings import settings
 from app.services.analytics import count_orders, count_by_status, top_managers, top_masters
 from app.services.exports import export_basic, export_full
-from app.services.users import is_admin, set_role
+from app.services.users import ensure_user, has_role, is_admin, set_role
 from app.utils.constants import ROLES
 
 router = Router()
@@ -30,10 +30,18 @@ def _format_stats(total: int, by_status: dict[str, int]) -> str:
     )
 
 
+async def _can_use_admin(message: Message, db) -> bool:
+    """Allow admin access by env whitelist or DB role."""
+    if is_admin(message.from_user.id, settings.get_admin_ids()):
+        return True
+    user = await ensure_user(db, message.from_user.id)
+    return has_role(user, ROLES["admin"])
+
+
 @router.message(Command("admin"))
-async def cmd_admin(message: Message) -> None:
+async def cmd_admin(message: Message, db) -> None:
     """Admin panel placeholder."""
-    if not is_admin(message.from_user.id, settings.get_admin_ids()):
+    if not await _can_use_admin(message, db):
         await message.answer("Нет доступа.")
         return
     await message.answer(
@@ -41,14 +49,14 @@ async def cmd_admin(message: Message) -> None:
         "/stats - аналитика\n"
         "/export_basic - экспорт CSV (основной)\n"
         "/export_full - экспорт CSV (полный)\n"
-        "/set_role <telegram_id> <admin|manager|master>"
+        "/set_role [telegram_id] [admin|manager|master]"
     )
 
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message, db) -> None:
     """Show basic analytics."""
-    if not is_admin(message.from_user.id, settings.get_admin_ids()):
+    if not await _can_use_admin(message, db):
         await message.answer("Нет доступа.")
         return
 
@@ -75,7 +83,7 @@ async def cmd_stats(message: Message, db) -> None:
 @router.message(Command("export_basic"))
 async def cmd_export_basic(message: Message, db) -> None:
     """Send basic CSV export."""
-    if not is_admin(message.from_user.id, settings.get_admin_ids()):
+    if not await _can_use_admin(message, db):
         await message.answer("Нет доступа.")
         return
 
@@ -87,7 +95,7 @@ async def cmd_export_basic(message: Message, db) -> None:
 @router.message(Command("export_full"))
 async def cmd_export_full(message: Message, db) -> None:
     """Send full CSV export."""
-    if not is_admin(message.from_user.id, settings.get_admin_ids()):
+    if not await _can_use_admin(message, db):
         await message.answer("Нет доступа.")
         return
 
@@ -99,13 +107,13 @@ async def cmd_export_full(message: Message, db) -> None:
 @router.message(Command("set_role"))
 async def cmd_set_role(message: Message, db) -> None:
     """Assign role to a user by telegram id."""
-    if not is_admin(message.from_user.id, settings.get_admin_ids()):
+    if not await _can_use_admin(message, db):
         await message.answer("Нет доступа.")
         return
 
     parts = message.text.strip().split()
     if len(parts) != 3:
-        await message.answer("Формат: /set_role <telegram_id> <admin|manager|master>")
+        await message.answer("Формат: /set_role [telegram_id] [admin|manager|master]")
         return
 
     try:

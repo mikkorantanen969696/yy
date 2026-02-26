@@ -3,6 +3,7 @@ User service functions: role checks and lookups.
 """
 from __future__ import annotations
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,9 +28,21 @@ async def ensure_user(session: AsyncSession, telegram_id: int, role: str = "") -
 
     user = User(telegram_id=telegram_id, role=role or "", city="")
     session.add(user)
-    await session.commit()
-    await session.refresh(user)
-    return user
+    try:
+        await session.commit()
+        await session.refresh(user)
+        return user
+    except IntegrityError:
+        # Concurrent update can insert the same telegram_id first.
+        await session.rollback()
+        existing = await get_user_by_telegram_id(session, telegram_id)
+        if existing:
+            if role and existing.role != role:
+                existing.role = role
+                await session.commit()
+                await session.refresh(existing)
+            return existing
+        raise
 
 
 async def set_role(session: AsyncSession, telegram_id: int, role: str) -> User:

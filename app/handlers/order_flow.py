@@ -3,9 +3,11 @@ Order creation and state machine implementation.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 
 from aiogram import Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -45,6 +47,7 @@ from app.utils.keyboards import (
 from app.utils.text import format_order_brief, format_order_full, format_manager_contact
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 class OrderFlow(StatesGroup):
@@ -73,6 +76,61 @@ def _format_date(date_obj: datetime) -> str:
     return date_obj.strftime("%d.%m.%Y")
 
 
+def _build_form_text(data: dict, prompt: str) -> str:
+    """Build a single editable order form message with current values."""
+    city_key = data.get("city", "")
+    city_value = CITY_CHOICES.get(city_key, city_key) or "-"
+    date_value = data.get("date", "") or "-"
+    time_value = data.get("time", "") or "-"
+    address_value = data.get("address", "") or "-"
+    type_value = data.get("cleaning_type", "") or "-"
+    equipment_value = data.get("equipment", "") or "-"
+    conditions_value = data.get("conditions", "") or "-"
+    comment_value = data.get("comment", "") or "-"
+    client_contact_value = data.get("client_contact", "") or "-"
+
+    return (
+        "Создание заявки\n\n"
+        f"Город: {city_value}\n"
+        f"Дата: {date_value}\n"
+        f"Время: {time_value}\n"
+        f"Адрес: {address_value}\n"
+        f"Тип уборки: {type_value}\n"
+        f"Оборудование: {equipment_value}\n"
+        f"Условия: {conditions_value}\n"
+        f"Комментарий: {comment_value}\n"
+        f"Контакт клиента: {client_contact_value}\n\n"
+        f"{prompt}"
+    )
+
+
+async def _edit_form_message(
+    bot,
+    chat_id: int,
+    state: FSMContext,
+    prompt: str,
+    reply_markup=None,
+) -> None:
+    """Edit one persistent message used for the whole order flow."""
+    data = await state.get_data()
+    form_message_id = data.get("form_message_id")
+    if not form_message_id:
+        return
+
+    text = _build_form_text(data, prompt)
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=form_message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).lower():
+            return
+        raise
+
+
 async def _ensure_manager(message: Message, db) -> bool:
     """Verify manager role or admin."""
     user = await ensure_user(db, message.from_user.id)
@@ -87,7 +145,11 @@ async def start_order_flow(message: Message, state: FSMContext, db) -> None:
         return
     await state.clear()
     await state.set_state(OrderFlow.city)
-    await message.answer("Выберите город:", reply_markup=build_city_keyboard())
+    form_message = await message.answer(
+        _build_form_text({}, "Выберите город:"),
+        reply_markup=build_city_keyboard(),
+    )
+    await state.update_data(form_message_id=form_message.message_id)
 
 
 @router.callback_query(lambda c: c.data == "flow:cancel")
@@ -104,42 +166,54 @@ async def flow_back(callback: CallbackQuery, state: FSMContext) -> None:
 
     if current == OrderFlow.date.state:
         await state.set_state(OrderFlow.city)
-        await callback.message.edit_text("Выберите город:", reply_markup=build_city_keyboard())
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Выберите город:", build_city_keyboard())
         return
     if current == OrderFlow.time.state:
         await state.set_state(OrderFlow.date)
-        await callback.message.edit_text("Выберите дату:", reply_markup=build_date_keyboard())
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Выберите дату:", build_date_keyboard())
         return
     if current == OrderFlow.address.state:
         await state.set_state(OrderFlow.time)
-        await callback.message.edit_text("Введите время (например 14:00):")
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Введите время (например 14:00):")
         return
     if current == OrderFlow.cleaning_type.state:
         await state.set_state(OrderFlow.address)
-        await callback.message.edit_text("Введите адрес:")
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Введите адрес:")
         return
     if current == OrderFlow.equipment.state:
         await state.set_state(OrderFlow.cleaning_type)
-        await callback.message.edit_text("Выберите тип уборки:", reply_markup=build_cleaning_type_keyboard())
+        await _edit_form_message(
+            callback.bot,
+            callback.message.chat.id,
+            state,
+            "Выберите тип уборки:",
+            build_cleaning_type_keyboard(),
+        )
         return
     if current == OrderFlow.conditions.state:
         await state.set_state(OrderFlow.equipment)
-        await callback.message.edit_text("Оборудование:", reply_markup=build_equipment_keyboard())
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Оборудование:", build_equipment_keyboard())
         return
     if current == OrderFlow.comment.state:
         await state.set_state(OrderFlow.conditions)
-        await callback.message.edit_text("Условия:", reply_markup=build_conditions_keyboard())
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Условия:", build_conditions_keyboard())
         return
     if current == OrderFlow.client_contact.state:
         await state.set_state(OrderFlow.comment)
-        await callback.message.edit_text("Комментарий (можно пропустить):", reply_markup=build_skip_keyboard())
+        await _edit_form_message(
+            callback.bot,
+            callback.message.chat.id,
+            state,
+            "Комментарий (можно пропустить):",
+            build_skip_keyboard(),
+        )
         return
     if current == OrderFlow.confirm.state:
         await state.set_state(OrderFlow.client_contact)
-        await callback.message.edit_text("Контакт клиента (только для менеджера/владельца):")
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Контакт клиента (только для менеджера/владельца):")
         return
 
-    await callback.message.edit_text("Нечего откатывать.")
+    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Нечего откатывать.")
 
 
 @router.callback_query(lambda c: c.data.startswith("city:"))
@@ -148,7 +222,7 @@ async def city_selected(callback: CallbackQuery, state: FSMContext) -> None:
     city_key = callback.data.split(":", 1)[1]
     await state.update_data(city=city_key)
     await state.set_state(OrderFlow.date)
-    await callback.message.edit_text("Выберите дату:", reply_markup=build_date_keyboard())
+    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Выберите дату:", build_date_keyboard())
 
 
 @router.callback_query(lambda c: c.data.startswith("date:"))
@@ -161,14 +235,14 @@ async def date_selected(callback: CallbackQuery, state: FSMContext) -> None:
     elif data == "tomorrow":
         date_value = _format_date(datetime.now() + timedelta(days=1))
     else:
-        await callback.message.edit_text("Введите дату (дд.мм.гггг):")
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Введите дату (дд.мм.гггг):")
         await state.set_state(OrderFlow.date)
         await state.update_data(date_manual=True)
         return
 
     await state.update_data(date=date_value)
     await state.set_state(OrderFlow.time)
-    await callback.message.edit_text("Введите время (например 14:00):")
+    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Введите время (например 14:00):")
 
 
 @router.message(OrderFlow.date)
@@ -177,7 +251,7 @@ async def date_manual(message: Message, state: FSMContext) -> None:
     text = message.text.strip()
     await state.update_data(date=text)
     await state.set_state(OrderFlow.time)
-    await message.answer("Введите время (например 14:00):")
+    await _edit_form_message(message.bot, message.chat.id, state, "Введите время (например 14:00):")
 
 
 @router.message(OrderFlow.time)
@@ -185,7 +259,7 @@ async def time_entered(message: Message, state: FSMContext) -> None:
     """Store time and ask for address."""
     await state.update_data(time=message.text.strip())
     await state.set_state(OrderFlow.address)
-    await message.answer("Введите адрес:")
+    await _edit_form_message(message.bot, message.chat.id, state, "Введите адрес:")
 
 
 @router.message(OrderFlow.address)
@@ -193,7 +267,13 @@ async def address_entered(message: Message, state: FSMContext) -> None:
     """Store address and ask for cleaning type."""
     await state.update_data(address=message.text.strip())
     await state.set_state(OrderFlow.cleaning_type)
-    await message.answer("Выберите тип уборки:", reply_markup=build_cleaning_type_keyboard())
+    await _edit_form_message(
+        message.bot,
+        message.chat.id,
+        state,
+        "Выберите тип уборки:",
+        build_cleaning_type_keyboard(),
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("type:"))
@@ -202,7 +282,7 @@ async def type_selected(callback: CallbackQuery, state: FSMContext) -> None:
     type_key = callback.data.split(":", 1)[1]
     await state.update_data(cleaning_type=CLEANING_TYPES.get(type_key, type_key))
     await state.set_state(OrderFlow.equipment)
-    await callback.message.edit_text("Оборудование:", reply_markup=build_equipment_keyboard())
+    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Оборудование:", build_equipment_keyboard())
 
 
 @router.callback_query(lambda c: c.data.startswith("equip:"))
@@ -211,7 +291,7 @@ async def equipment_selected(callback: CallbackQuery, state: FSMContext) -> None
     equip_key = callback.data.split(":", 1)[1]
     await state.update_data(equipment=EQUIPMENT_OPTIONS.get(equip_key, equip_key))
     await state.set_state(OrderFlow.conditions)
-    await callback.message.edit_text("Условия:", reply_markup=build_conditions_keyboard())
+    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Условия:", build_conditions_keyboard())
 
 
 @router.callback_query(lambda c: c.data.startswith("cond:"))
@@ -220,7 +300,13 @@ async def conditions_selected(callback: CallbackQuery, state: FSMContext) -> Non
     cond_key = callback.data.split(":", 1)[1]
     await state.update_data(conditions=CONDITION_OPTIONS.get(cond_key, cond_key))
     await state.set_state(OrderFlow.comment)
-    await callback.message.edit_text("Комментарий (можно пропустить):", reply_markup=build_skip_keyboard())
+    await _edit_form_message(
+        callback.bot,
+        callback.message.chat.id,
+        state,
+        "Комментарий (можно пропустить):",
+        build_skip_keyboard(),
+    )
 
 
 @router.callback_query(lambda c: c.data == "flow:skip")
@@ -228,7 +314,7 @@ async def comment_skipped(callback: CallbackQuery, state: FSMContext) -> None:
     """Skip optional comment."""
     await state.update_data(comment="")
     await state.set_state(OrderFlow.client_contact)
-    await callback.message.edit_text("Контакт клиента (только для менеджера/владельца):")
+    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Контакт клиента (только для менеджера/владельца):")
 
 
 @router.message(OrderFlow.comment)
@@ -236,36 +322,21 @@ async def comment_entered(message: Message, state: FSMContext) -> None:
     """Store comment and ask for client contact."""
     await state.update_data(comment=message.text.strip())
     await state.set_state(OrderFlow.client_contact)
-    await message.answer("Контакт клиента (только для менеджера/владельца):")
+    await _edit_form_message(message.bot, message.chat.id, state, "Контакт клиента (только для менеджера/владельца):")
 
 
 @router.message(OrderFlow.client_contact)
 async def client_contact_entered(message: Message, state: FSMContext) -> None:
     """Store client contact and show confirm summary."""
     await state.update_data(client_contact=message.text.strip())
-    data = await state.get_data()
-
-    summary = (
-        f"Проверьте заявку:\n"
-        f"Город: {CITY_CHOICES.get(data.get('city', ''), data.get('city', ''))}\n"
-        f"Дата: {data.get('date', '')} {data.get('time', '')}\n"
-        f"Адрес: {data.get('address', '')}\n"
-        f"Тип: {data.get('cleaning_type', '')}\n"
-        f"Оборудование: {data.get('equipment', '')}\n"
-        f"Условия: {data.get('conditions', '')}\n"
-        f"Комментарий: {data.get('comment', '') or '-'}\n"
-        f"Контакт клиента: {data.get('client_contact', '')}\n"
-    )
-
     await state.set_state(OrderFlow.confirm)
-    await message.answer(summary, reply_markup=build_confirm_keyboard())
+    await _edit_form_message(message.bot, message.chat.id, state, "Проверьте заявку и нажмите «Подтвердить».", build_confirm_keyboard())
 
 
 @router.callback_query(lambda c: c.data == "flow:confirm")
 async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
     """Persist order and publish to Telegram group topic."""
     data = await state.get_data()
-
     manager_id = callback.from_user.id
 
     order_payload = {
@@ -283,15 +354,43 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
         "manager_contact": str(manager_id),
     }
 
-    order = await create_order(db, order_payload)
+    try:
+        order = await create_order(db, order_payload)
+    except Exception as exc:
+        logger.exception("Order create failed")
+        await callback.answer("Ошибка сохранения заявки", show_alert=True)
+        await callback.message.edit_text(f"Ошибка сохранения заявки: {exc}")
+        return
 
     brief = format_order_brief({**order_payload, "id": order.id})
-    message = await send_to_city_topic(callback.bot, order.city, brief, order.id)
+    try:
+        message = await send_to_city_topic(callback.bot, order.city, brief, order.id)
+    except TelegramBadRequest as exc:
+        logger.exception("Telegram publish failed")
+        await callback.answer("Заявка сохранена, но не опубликована", show_alert=True)
+        await callback.message.edit_text(
+            f"Заявка #{order.id} создана, но не опубликована.\n"
+            f"Причина Telegram: {exc.message}"
+        )
+        await state.clear()
+        return
+    except Exception as exc:
+        logger.exception("Unexpected publish error")
+        await callback.answer("Заявка сохранена, но не опубликована", show_alert=True)
+        await callback.message.edit_text(
+            f"Заявка #{order.id} создана, но не опубликована.\n"
+            f"Причина: {exc}"
+        )
+        await state.clear()
+        return
 
     if message:
         await callback.message.edit_text(f"Заявка #{order.id} опубликована.")
     else:
-        await callback.message.edit_text(f"Заявка #{order.id} создана, но не опубликована.")
+        await callback.message.edit_text(
+            f"Заявка #{order.id} создана, но не опубликована.\n"
+            "Проверьте GROUP_CHAT_ID и CITY_TOPIC_* в .env."
+        )
 
     await state.clear()
 
