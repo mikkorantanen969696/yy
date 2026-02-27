@@ -6,6 +6,14 @@ from __future__ import annotations
 from app.utils.constants import CITY_CHOICES
 
 
+def format_user_link(telegram_id: int | None, label: str | None = None) -> str:
+    """Build clickable Telegram profile link for HTML parse mode."""
+    if not telegram_id:
+        return "-"
+    text = label or str(telegram_id)
+    return f'<a href="tg://user?id={int(telegram_id)}">{text}</a>'
+
+
 def format_order_brief(data: dict) -> str:
     """Create a short order text for group publishing."""
     city_key = data.get("city", "")
@@ -36,6 +44,6 @@ def format_order_full(data: dict) -> str:
     )
 
 
-def format_manager_contact(manager_telegram_id: int) -> str:
+def format_manager_contact(manager_telegram_id: int | None) -> str:
     """Basic manager contact string."""
-    return f"Контакт менеджера: tg://user?id={manager_telegram_id}"
+    return f"Контакт менеджера: {format_user_link(manager_telegram_id, 'написать менеджеру')}"

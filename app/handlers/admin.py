@@ -40,6 +40,7 @@ from app.utils.keyboards import (
     build_admin_panel_keyboard,
     build_admin_users_filter_keyboard,
 )
+from app.utils.text import format_user_link
 
 router = Router()
 
@@ -98,9 +99,11 @@ def _format_orders_list(orders: list, title: str) -> str:
 
     lines = [title]
     for order in orders:
+        manager_link = format_user_link(order.manager_id)
+        master_link = format_user_link(order.master_id)
         lines.append(
             f"#{order.id} | {_city_label(order.city)} | {order.date} {order.time} | {order.status} | "
-            f"mgr:{order.manager_id or '-'} | mst:{order.master_id or '-'}"
+            f"mgr:{manager_link} | mst:{master_link}"
         )
     return "\n".join(lines)
 
@@ -116,8 +119,9 @@ def _format_users_list(users: list, total_users: int, by_role: dict[str, int], t
         "По ролям: " + ", ".join(f"{k or 'без роли'}={v}" for k, v in by_role.items()),
     ]
     for user in users:
+        user_link = format_user_link(user.telegram_id)
         lines.append(
-            f"- tg:{user.telegram_id} | role:{user.role or '-'} | "
+            f"- tg:{user_link} | role:{user.role or '-'} | "
             f"active:{'yes' if user.is_active else 'no'} | city:{user.city or '-'}"
         )
     return "\n".join(lines)
@@ -173,11 +177,11 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
         if managers:
             stats_text += "\nТоп менеджеров:\n"
             for mid, cnt in managers:
-                stats_text += f"- {mid}: {cnt}\n"
+                stats_text += f"- {format_user_link(mid)}: {cnt}\n"
         if masters:
             stats_text += "\nТоп мастеров:\n"
             for mid, cnt in masters:
-                stats_text += f"- {mid}: {cnt}\n"
+                stats_text += f"- {format_user_link(mid)}: {cnt}\n"
 
         await callback.message.answer(stats_text)
         await callback.answer()
@@ -307,12 +311,12 @@ async def cmd_stats(message: Message, db) -> None:
     if managers:
         stats_text += "\nТоп менеджеров:\n"
         for mid, cnt in managers:
-            stats_text += f"- {mid}: {cnt}\n"
+            stats_text += f"- {format_user_link(mid)}: {cnt}\n"
 
     if masters:
         stats_text += "\nТоп мастеров:\n"
         for mid, cnt in masters:
-            stats_text += f"- {mid}: {cnt}\n"
+            stats_text += f"- {format_user_link(mid)}: {cnt}\n"
 
     await message.answer(stats_text)
 
@@ -366,9 +370,11 @@ async def cmd_orders(message: Message, db) -> None:
 
     lines = [f"Последние заявки (до {limit}):"]
     for order in orders:
+        manager_link = format_user_link(order.manager_id)
+        master_link = format_user_link(order.master_id)
         lines.append(
             f"#{order.id} | {_city_label(order.city)} | {order.date} {order.time} | {order.status} | "
-            f"mgr:{order.manager_id or '-'} | mst:{order.master_id or '-'}"
+            f"mgr:{manager_link} | mst:{master_link}"
         )
     await message.answer("\n".join(lines))
 
@@ -406,9 +412,9 @@ async def cmd_order_detail(message: Message, db) -> None:
         f"Условия: {order.conditions}\n"
         f"Комментарий: {order.comment or '-'}\n"
         f"Контакт клиента: {order.client_contact or '-'}\n"
-        f"Контакт менеджера: {order.manager_contact or '-'}\n"
-        f"Менеджер TG: {order.manager_id or '-'}\n"
-        f"Мастер TG: {order.master_id or '-'}\n"
+        f"Контакт менеджера: {format_user_link(order.manager_id, 'написать менеджеру')}\n"
+        f"Менеджер TG: {format_user_link(order.manager_id)}\n"
+        f"Мастер TG: {format_user_link(order.master_id)}\n"
         f"Статус: {order.status}\n"
         f"Создана: {order.created_at.isoformat() if order.created_at else '-'}"
     )
@@ -592,7 +598,7 @@ async def cmd_set_role(message: Message, db) -> None:
         return
 
     await set_role(db, telegram_id, role)
-    await message.answer(f"Роль {role} назначена пользователю {telegram_id}.")
+    await message.answer(f"Роль {role} назначена пользователю {format_user_link(telegram_id)}.")
 
 
 @router.message(Command("set_active"))
@@ -625,7 +631,7 @@ async def cmd_set_active(message: Message, db) -> None:
         return
 
     await message.answer(
-        f"Пользователь {user.telegram_id}: active={'yes' if user.is_active else 'no'}."
+        f"Пользователь {format_user_link(user.telegram_id)}: active={'yes' if user.is_active else 'no'}."
     )
 
 

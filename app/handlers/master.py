@@ -10,6 +10,7 @@ from aiogram.types import Message
 from app.services.orders import list_orders_by_master
 from app.services.users import ensure_user, has_role
 from app.utils.constants import ROLES
+from app.utils.text import format_user_link
 
 router = Router()
 
@@ -21,8 +22,9 @@ def _format_orders(orders) -> str:
 
     lines = ["🧰 Ваши последние заказы:"]
     for order in orders[-20:]:
+        manager_link = format_user_link(order.manager_id, "менеджер")
         lines.append(
-            f"#{order.id} | {order.city} | {order.date} {order.time} | {order.status}"
+            f"#{order.id} | {order.city} | {order.date} {order.time} | {order.status} | {manager_link}"
         )
     return "\n".join(lines)
 
