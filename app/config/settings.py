@@ -21,6 +21,8 @@ class Settings(BaseSettings):
 
     # Database URL (default to local SQLite for stage 1)
     database_url: str = "sqlite+aiosqlite:///./data.db"
+    db_ssl_mode: str = ""
+    db_ssl_root_cert: str = ""
 
     # Run mode: polling or webhook
     run_mode: str = "polling"

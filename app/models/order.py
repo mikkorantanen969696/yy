@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, ForeignKey
+from sqlalchemy import BigInteger, DateTime, Integer, String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -29,8 +29,8 @@ class Order(Base):
     manager_contact: Mapped[str] = mapped_column(String(128), default="")
 
     # Telegram IDs are used across handlers/services, so FK must match users.telegram_id.
-    manager_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.telegram_id"))
-    master_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.telegram_id"))
+    manager_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
+    master_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
 
     status: Mapped[str] = mapped_column(String(32), default="created")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

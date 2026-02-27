@@ -19,6 +19,10 @@ Required:
 - `ADMIN_IDS`
 - `GROUP_CHAT_ID`
 
+Optional for Postgres SSL:
+- `DB_SSL_MODE` (`require` / `verify-ca` / `verify-full`)
+- `DB_SSL_ROOT_CERT` (path to CA root cert)
+
 For webhook mode:
 - `WEBHOOK_URL` (base URL like `https://bot.example.com` or full URL with path)
 - `WEBHOOK_PATH` (default `/webhook`)
@@ -31,6 +35,10 @@ Recommended for production: PostgreSQL.
 
 Example:
 `DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname`
+
+If provider requires certificate validation, also set:
+`DB_SSL_MODE=verify-full`
+`DB_SSL_ROOT_CERT=/path/to/root.crt`
 
 Notes:
 - Tables are created automatically at startup (`create_all`).
