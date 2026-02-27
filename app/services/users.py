@@ -3,8 +3,8 @@ User service functions: role checks and lookups.
 """
 from __future__ import annotations
 
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -56,6 +56,48 @@ async def set_role(session: AsyncSession, telegram_id: int, role: str) -> User:
     return user
 
 
+async def set_user_active(session: AsyncSession, telegram_id: int, is_active: bool) -> User:
+    """Enable or disable user account."""
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if not user:
+        raise ValueError("User not found")
+
+    user.is_active = is_active
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+async def list_users(
+    session: AsyncSession,
+    role: str | None = None,
+    active: bool | None = None,
+    limit: int = 100,
+) -> list[User]:
+    """List users with optional role and activity filters."""
+    stmt = select(User)
+    if role:
+        stmt = stmt.where(User.role == role)
+    if active is not None:
+        stmt = stmt.where(User.is_active == active)
+
+    stmt = stmt.order_by(User.created_at.desc()).limit(limit)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def count_users(session: AsyncSession) -> int:
+    """Total users count."""
+    result = await session.execute(select(func.count(User.id)))
+    return int(result.scalar() or 0)
+
+
+async def count_users_by_role(session: AsyncSession) -> dict[str, int]:
+    """Count users grouped by role."""
+    result = await session.execute(select(User.role, func.count(User.id)).group_by(User.role))
+    return {(role or ""): int(count) for role, count in result.all()}
+
+
 def is_admin(telegram_id: int, admin_ids: list[int]) -> bool:
     """Check if user is in admin list."""
     return telegram_id in admin_ids
@@ -64,3 +106,4 @@ def is_admin(telegram_id: int, admin_ids: list[int]) -> bool:
 def has_role(user: User, role: str) -> bool:
     """Check if user has expected role."""
     return user.role == role
+

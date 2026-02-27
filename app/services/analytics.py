@@ -32,6 +32,16 @@ async def count_by_status(session: AsyncSession) -> dict[str, int]:
     return out
 
 
+async def count_by_city(session: AsyncSession) -> dict[str, int]:
+    """Count orders grouped by city."""
+    result = await session.execute(
+        select(Order.city, func.count(Order.id))
+        .group_by(Order.city)
+        .order_by(func.count(Order.id).desc())
+    )
+    return {(city or "-"): int(count) for city, count in result.all()}
+
+
 async def average_response_time_minutes(session: AsyncSession) -> float:
     """Average response time in minutes based on responses table."""
     result = await session.execute(select(func.avg(Response.id)))
@@ -64,3 +74,4 @@ async def top_managers(session: AsyncSession, limit: int = 5) -> list[tuple[int,
         .limit(limit)
     )
     return [(int(mid), int(cnt)) for mid, cnt in result.all() if mid]
+

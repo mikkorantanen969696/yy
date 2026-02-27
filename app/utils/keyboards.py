@@ -115,3 +115,46 @@ def build_photo_actions_keyboard(order_id: int) -> InlineKeyboardMarkup:
     builder.add(InlineKeyboardButton(text="Завершить заказ", callback_data=f"finish:{order_id}"))
     builder.adjust(1)
     return builder.as_markup()
+
+
+def build_admin_panel_keyboard() -> InlineKeyboardMarkup:
+    """Main admin panel quick actions."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="Общая статистика", callback_data="admin:stats"))
+    builder.add(InlineKeyboardButton(text="Статистика по городам", callback_data="admin:city_stats"))
+    builder.add(InlineKeyboardButton(text="Последние заявки", callback_data="admin:orders"))
+    builder.add(InlineKeyboardButton(text="Пользователи", callback_data="admin:users"))
+    builder.add(InlineKeyboardButton(text="Экспорт basic CSV", callback_data="admin:export_basic"))
+    builder.add(InlineKeyboardButton(text="Экспорт full CSV", callback_data="admin:export_full"))
+    builder.add(InlineKeyboardButton(text="Обновить меню", callback_data="admin:refresh"))
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def build_admin_orders_filter_keyboard() -> InlineKeyboardMarkup:
+    """Order status filters for admin panel."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="Все", callback_data="admin:orders_filter:all"))
+    builder.add(InlineKeyboardButton(text="Создана", callback_data="admin:orders_filter:created"))
+    builder.add(InlineKeyboardButton(text="Опубликована", callback_data="admin:orders_filter:published"))
+    builder.add(InlineKeyboardButton(text="Назначена", callback_data="admin:orders_filter:assigned"))
+    builder.add(InlineKeyboardButton(text="В работе", callback_data="admin:orders_filter:in_progress"))
+    builder.add(InlineKeyboardButton(text="Завершена", callback_data="admin:orders_filter:completed"))
+    builder.add(InlineKeyboardButton(text="Отменена", callback_data="admin:orders_filter:cancelled"))
+    builder.add(InlineKeyboardButton(text="Назад в админку", callback_data="admin:refresh"))
+    builder.adjust(3)
+    return builder.as_markup()
+
+
+def build_admin_users_filter_keyboard() -> InlineKeyboardMarkup:
+    """User filters for admin panel."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="Все", callback_data="admin:users_filter:all:all"))
+    builder.add(InlineKeyboardButton(text="Активные", callback_data="admin:users_filter:all:active"))
+    builder.add(InlineKeyboardButton(text="Неактивные", callback_data="admin:users_filter:all:inactive"))
+    builder.add(InlineKeyboardButton(text="Админы", callback_data="admin:users_filter:admin:all"))
+    builder.add(InlineKeyboardButton(text="Менеджеры", callback_data="admin:users_filter:manager:all"))
+    builder.add(InlineKeyboardButton(text="Мастера", callback_data="admin:users_filter:master:all"))
+    builder.add(InlineKeyboardButton(text="Назад в админку", callback_data="admin:refresh"))
+    builder.adjust(3)
+    return builder.as_markup()

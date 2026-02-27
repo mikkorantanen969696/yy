@@ -35,6 +35,24 @@ async def list_all_orders(session: AsyncSession) -> list[Order]:
     return list(result.scalars().all())
 
 
+async def list_recent_orders(
+    session: AsyncSession,
+    status: str | None = None,
+    city: str | None = None,
+    limit: int = 20,
+) -> list[Order]:
+    """List latest orders with optional filters."""
+    stmt = select(Order)
+    if status:
+        stmt = stmt.where(Order.status == status)
+    if city:
+        stmt = stmt.where(Order.city == city)
+
+    stmt = stmt.order_by(Order.created_at.desc()).limit(limit)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def list_orders_by_manager(session: AsyncSession, manager_id: int) -> list[Order]:
     """List orders created by manager."""
     result = await session.execute(select(Order).where(Order.manager_id == manager_id))
@@ -89,3 +107,4 @@ async def add_photo(session: AsyncSession, order_id: int, file_id: str, photo_ty
     await session.commit()
     await session.refresh(photo)
     return photo
+
