@@ -3,7 +3,7 @@ User service functions: role checks and lookups.
 """
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import BigInteger, bindparam, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,10 @@ from app.utils.constants import ROLES
 
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> User | None:
     """Fetch a user by Telegram ID."""
-    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+    stmt = select(User).where(
+        User.telegram_id == bindparam("telegram_id", type_=BigInteger)
+    )
+    result = await session.execute(stmt, {"telegram_id": int(telegram_id)})
     return result.scalar_one_or_none()
 
 
