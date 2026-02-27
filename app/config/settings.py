@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # Webhook configuration
     webhook_path: str = "/webhook"
     webhook_url: str = ""
+    app_host: str = "0.0.0.0"
+    app_port: int = 8080
 
     # Admin Telegram IDs (comma-separated)
     admin_ids: str = ""
@@ -74,6 +76,30 @@ class Settings(BaseSettings):
             except ValueError:
                 continue
         return out
+
+    def get_webhook_path(self) -> str:
+        """Return webhook path in '/path' format."""
+        path = (self.webhook_path or "").strip()
+        if not path:
+            return "/webhook"
+        return path if path.startswith("/") else f"/{path}"
+
+    def get_webhook_url(self) -> str:
+        """
+        Build full webhook URL.
+
+        Supports either:
+        - full URL including path (https://host/webhook)
+        - base URL without path (https://host)
+        """
+        base = (self.webhook_url or "").strip().rstrip("/")
+        if not base:
+            return ""
+
+        path = self.get_webhook_path()
+        if base.endswith(path):
+            return base
+        return f"{base}{path}"
 
 
 settings = Settings()

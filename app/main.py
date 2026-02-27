@@ -25,8 +25,11 @@ async def on_startup(bot: Bot) -> None:
     await init_db()
 
     if settings.run_mode == "webhook":
-        # Set webhook to point to your public server.
-        await bot.set_webhook(settings.webhook_url)
+        webhook_url = settings.get_webhook_url()
+        if not webhook_url:
+            raise RuntimeError("WEBHOOK_URL is required in webhook mode")
+        # Set webhook to point to your public server endpoint.
+        await bot.set_webhook(webhook_url)
 
 
 async def on_shutdown(bot: Bot) -> None:
@@ -67,10 +70,10 @@ async def run_webhook() -> None:
     handler.register(app, path=settings.webhook_path)
     setup_application(app, dp, bot=bot)
 
-    # Serve on default aiohttp port.
+    # Serve on configurable host/port.
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
+    site = web.TCPSite(runner, settings.app_host, settings.app_port)
     await site.start()
 
     # Keep the process alive.

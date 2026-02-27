@@ -18,5 +18,6 @@ class Response(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(Integer, ForeignKey("orders.id"))
-    master_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    # Stores master Telegram ID (not users.id).
+    master_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.telegram_id"))
     response_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
