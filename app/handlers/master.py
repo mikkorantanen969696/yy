@@ -17,9 +17,9 @@ router = Router()
 def _format_orders(orders) -> str:
     """Format orders list for message."""
     if not orders:
-        return "Заказов нет."
+        return "📭 У вас пока нет заказов."
 
-    lines = ["Мои заказы:"]
+    lines = ["🧰 Ваши последние заказы:"]
     for order in orders[-20:]:
         lines.append(
             f"#{order.id} | {order.city} | {order.date} {order.time} | {order.status}"
@@ -29,15 +29,16 @@ def _format_orders(orders) -> str:
 
 @router.message(Command("profile"))
 async def cmd_profile(message: Message, db) -> None:
-    """Master profile placeholder."""
+    """Master profile."""
     user = await ensure_user(db, message.from_user.id)
     if not has_role(user, ROLES["master"]):
-        await message.answer("Нет доступа. Роль мастера не назначена.")
+        await message.answer("⛔ Нет доступа. Роль мастера не назначена.")
         return
     await message.answer(
-        "Профиль мастера:\n"
+        "👷 Профиль мастера\n"
         "/my_jobs - мои заказы\n"
-        "/my_stats - моя статистика"
+        "/my_stats - моя статистика\n\n"
+        "ℹ️ Подробная инструкция: /help"
     )
 
 
@@ -46,7 +47,7 @@ async def cmd_my_jobs(message: Message, db) -> None:
     """List master orders."""
     user = await ensure_user(db, message.from_user.id)
     if not has_role(user, ROLES["master"]):
-        await message.answer("Нет доступа. Роль мастера не назначена.")
+        await message.answer("⛔ Нет доступа. Роль мастера не назначена.")
         return
 
     orders = await list_orders_by_master(db, user.telegram_id)
@@ -58,14 +59,14 @@ async def cmd_my_stats(message: Message, db) -> None:
     """Basic master stats."""
     user = await ensure_user(db, message.from_user.id)
     if not has_role(user, ROLES["master"]):
-        await message.answer("Нет доступа. Роль мастера не назначена.")
+        await message.answer("⛔ Нет доступа. Роль мастера не назначена.")
         return
 
     orders = await list_orders_by_master(db, user.telegram_id)
     total = len(orders)
     completed = len([o for o in orders if o.status == "completed"])
     await message.answer(
-        f"Моя статистика:\n"
+        f"📊 Моя статистика:\n"
         f"Всего заказов: {total}\n"
         f"Завершено: {completed}"
     )

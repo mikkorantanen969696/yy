@@ -90,16 +90,16 @@ def _build_form_text(data: dict, prompt: str) -> str:
     client_contact_value = data.get("client_contact", "") or "-"
 
     return (
-        "Создание заявки\n\n"
-        f"Город: {city_value}\n"
-        f"Дата: {date_value}\n"
-        f"Время: {time_value}\n"
-        f"Адрес: {address_value}\n"
-        f"Тип уборки: {type_value}\n"
-        f"Оборудование: {equipment_value}\n"
-        f"Условия: {conditions_value}\n"
-        f"Комментарий: {comment_value}\n"
-        f"Контакт клиента: {client_contact_value}\n\n"
+        "📝 Создание заявки\n\n"
+        f"🏙️ Город: {city_value}\n"
+        f"📅 Дата: {date_value}\n"
+        f"⏰ Время: {time_value}\n"
+        f"📍 Адрес: {address_value}\n"
+        f"🧹 Тип уборки: {type_value}\n"
+        f"🧰 Оборудование: {equipment_value}\n"
+        f"💸 Условия: {conditions_value}\n"
+        f"💬 Комментарий: {comment_value}\n"
+        f"📞 Контакт клиента: {client_contact_value}\n\n"
         f"{prompt}"
     )
 
@@ -141,7 +141,7 @@ async def _ensure_manager(message: Message, db) -> bool:
 async def start_order_flow(message: Message, state: FSMContext, db) -> None:
     """Begin order creation flow for managers."""
     if not await _ensure_manager(message, db):
-        await message.answer("Нет доступа. Роль менеджера не назначена.")
+        await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
     await state.clear()
     await state.set_state(OrderFlow.city)
@@ -156,7 +156,7 @@ async def start_order_flow(message: Message, state: FSMContext, db) -> None:
 async def flow_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     """Cancel any active flow."""
     await state.clear()
-    await callback.message.edit_text("Сценарий отменен.")
+    await callback.message.edit_text("🛑 Сценарий создания заявки отменен.")
 
 
 @router.callback_query(lambda c: c.data == "flow:back")
@@ -213,7 +213,7 @@ async def flow_back(callback: CallbackQuery, state: FSMContext) -> None:
         await _edit_form_message(callback.bot, callback.message.chat.id, state, "Контакт клиента (только для менеджера/владельца):")
         return
 
-    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Нечего откатывать.")
+    await _edit_form_message(callback.bot, callback.message.chat.id, state, "↩️ Нечего откатывать.")
 
 
 @router.callback_query(lambda c: c.data.startswith("city:"))
@@ -359,7 +359,7 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
     except Exception as exc:
         logger.exception("Order create failed")
         await callback.answer("Ошибка сохранения заявки", show_alert=True)
-        await callback.message.edit_text(f"Ошибка сохранения заявки: {exc}")
+        await callback.message.edit_text(f"❌ Ошибка сохранения заявки: {exc}")
         return
 
     brief = format_order_brief({**order_payload, "id": order.id})
@@ -369,7 +369,7 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
         logger.exception("Telegram publish failed")
         await callback.answer("Заявка сохранена, но не опубликована", show_alert=True)
         await callback.message.edit_text(
-            f"Заявка #{order.id} создана, но не опубликована.\n"
+            f"⚠️ Заявка #{order.id} создана, но не опубликована.\n"
             f"Причина Telegram: {exc.message}"
         )
         await state.clear()
@@ -378,17 +378,17 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
         logger.exception("Unexpected publish error")
         await callback.answer("Заявка сохранена, но не опубликована", show_alert=True)
         await callback.message.edit_text(
-            f"Заявка #{order.id} создана, но не опубликована.\n"
+            f"⚠️ Заявка #{order.id} создана, но не опубликована.\n"
             f"Причина: {exc}"
         )
         await state.clear()
         return
 
     if message:
-        await callback.message.edit_text(f"Заявка #{order.id} опубликована.")
+        await callback.message.edit_text(f"✅ Заявка #{order.id} опубликована.")
     else:
         await callback.message.edit_text(
-            f"Заявка #{order.id} создана, но не опубликована.\n"
+            f"⚠️ Заявка #{order.id} создана, но не опубликована.\n"
             "Проверьте GROUP_CHAT_ID и CITY_TOPIC_* в .env."
         )
 
@@ -400,7 +400,7 @@ async def master_respond(callback: CallbackQuery, db) -> None:
     """Master responds from group message."""
     user = await ensure_user(db, callback.from_user.id)
     if not has_role(user, ROLES["master"]):
-        await callback.answer("Нет доступа.", show_alert=True)
+        await callback.answer("⛔ Нет доступа.", show_alert=True)
         return
 
     order_id = int(callback.data.split(":", 1)[1])
@@ -432,11 +432,11 @@ async def master_respond(callback: CallbackQuery, db) -> None:
     contact = format_manager_contact(order.manager_id)
     await callback.bot.send_message(
         chat_id=callback.from_user.id,
-        text=f"Вы откликнулись.\n\n{full_text}\n{contact}",
+        text=f"✅ Вы откликнулись на заявку.\n\n{full_text}\n{contact}",
         reply_markup=build_master_accept_keyboard(order.id),
     )
 
-    await callback.answer("Отклик принят.")
+    await callback.answer("Отклик принят ✅")
 
 
 @router.callback_query(lambda c: c.data.startswith("accept:"))
@@ -450,7 +450,7 @@ async def master_accept(callback: CallbackQuery, db) -> None:
 
     await set_status(db, order, ORDER_STATUSES["in_progress"])
     await callback.message.edit_text(
-        f"Заявка #{order.id} в работе.\n"
+        f"🧰 Заявка #{order.id} в работе.\n"
         "Загрузите фото ДО и ПОСЛЕ.",
         reply_markup=build_photo_actions_keyboard(order.id),
     )
@@ -466,7 +466,7 @@ async def master_decline(callback: CallbackQuery, db) -> None:
         return
 
     await unassign_master(db, order)
-    await callback.message.edit_text("Вы отказались от заявки. Она снова доступна.")
+    await callback.message.edit_text("↩️ Вы отказались от заявки. Она снова доступна.")
 
 
 @router.callback_query(lambda c: c.data.startswith("photo_before:"))
@@ -475,7 +475,7 @@ async def photo_before(callback: CallbackQuery, state: FSMContext) -> None:
     order_id = int(callback.data.split(":", 1)[1])
     await state.set_state(PhotoFlow.waiting_photo)
     await state.update_data(order_id=order_id, photo_type="before")
-    await callback.message.answer("Отправьте фото ДО (минимум 1).")
+    await callback.message.answer("📸 Отправьте фото ДО (минимум 1).")
 
 
 @router.callback_query(lambda c: c.data.startswith("photo_after:"))
@@ -484,14 +484,14 @@ async def photo_after(callback: CallbackQuery, state: FSMContext) -> None:
     order_id = int(callback.data.split(":", 1)[1])
     await state.set_state(PhotoFlow.waiting_photo)
     await state.update_data(order_id=order_id, photo_type="after")
-    await callback.message.answer("Отправьте фото ПОСЛЕ (минимум 1).")
+    await callback.message.answer("📸 Отправьте фото ПОСЛЕ (минимум 1).")
 
 
 @router.message(PhotoFlow.waiting_photo)
 async def receive_photo(message: Message, state: FSMContext, db) -> None:
     """Store photo file_id in DB."""
     if not message.photo:
-        await message.answer("Нужно отправить фото.")
+        await message.answer("⚠️ Нужно отправить фото.")
         return
 
     data = await state.get_data()
@@ -500,7 +500,7 @@ async def receive_photo(message: Message, state: FSMContext, db) -> None:
     file_id = message.photo[-1].file_id
 
     await add_photo(db, order_id, file_id, photo_type)
-    await message.answer("Фото сохранено.")
+    await message.answer("✅ Фото сохранено.")
 
 
 @router.callback_query(lambda c: c.data.startswith("finish:"))
@@ -513,4 +513,4 @@ async def finish_order(callback: CallbackQuery, db) -> None:
         return
 
     await set_status(db, order, ORDER_STATUSES["completed"])
-    await callback.message.edit_text(f"Заявка #{order.id} завершена.")
+    await callback.message.edit_text(f"✅ Заявка #{order.id} завершена.")

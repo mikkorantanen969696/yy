@@ -65,7 +65,7 @@ def _city_label(city_key: str) -> str:
 def _usage() -> str:
     """Admin command list."""
     return (
-        "Админ-панель:\n"
+        "🛠️ Админ-панель:\n"
         "/stats - общая аналитика\n"
         "/city_stats - статистика по городам\n"
         "/orders [status|all] [limit] - последние заявки\n"
@@ -77,7 +77,8 @@ def _usage() -> str:
         "/set_active [telegram_id] [on|off] - активировать/деактивировать\n"
         "/broadcast [role|all] [текст] - рассылка пользователям\n"
         "/export_basic - экспорт CSV (основной)\n"
-        "/export_full - экспорт CSV (полный)"
+        "/export_full - экспорт CSV (полный)\n\n"
+        "ℹ️ Подробная инструкция: /help"
     )
 
 
@@ -122,19 +123,19 @@ def _format_users_list(users: list, total_users: int, by_role: dict[str, int], t
     return "\n".join(lines)
 
 
-async def _can_use_admin(message: Message, db) -> bool:
+async def _can_use_admin(telegram_id: int, db) -> bool:
     """Allow admin access by env whitelist or DB role."""
-    if is_admin(message.from_user.id, settings.get_admin_ids()):
+    if is_admin(telegram_id, settings.get_admin_ids()):
         return True
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, telegram_id)
     return has_role(user, ROLES["admin"])
 
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, db) -> None:
     """Admin panel help."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
     await message.answer(_usage(), reply_markup=build_admin_panel_keyboard())
 
@@ -146,8 +147,8 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
         await callback.answer("Сообщение недоступно.", show_alert=True)
         return
 
-    if not await _can_use_admin(callback.message, db):
-        await callback.answer("Нет доступа.", show_alert=True)
+    if not await _can_use_admin(callback.from_user.id, db):
+        await callback.answer("⛔ Нет доступа к админ-функциям.", show_alert=True)
         return
 
     action = callback.data.split(":", 1)[1]
@@ -286,8 +287,8 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
 @router.message(Command("stats"))
 async def cmd_stats(message: Message, db) -> None:
     """Show extended analytics."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     total = await count_orders(db)
@@ -319,8 +320,8 @@ async def cmd_stats(message: Message, db) -> None:
 @router.message(Command("city_stats"))
 async def cmd_city_stats(message: Message, db) -> None:
     """Show city-level order distribution."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     by_city = await count_by_city(db)
@@ -337,8 +338,8 @@ async def cmd_city_stats(message: Message, db) -> None:
 @router.message(Command("orders"))
 async def cmd_orders(message: Message, db) -> None:
     """List latest orders with optional status filter."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
@@ -375,8 +376,8 @@ async def cmd_orders(message: Message, db) -> None:
 @router.message(Command("order"))
 async def cmd_order_detail(message: Message, db) -> None:
     """Show full details for one order."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
@@ -416,8 +417,8 @@ async def cmd_order_detail(message: Message, db) -> None:
 @router.message(Command("set_status"))
 async def cmd_set_status(message: Message, db) -> None:
     """Change order status."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
@@ -450,8 +451,8 @@ async def cmd_set_status(message: Message, db) -> None:
 @router.message(Command("reassign"))
 async def cmd_reassign(message: Message, db) -> None:
     """Assign or unassign master for an order."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
@@ -492,8 +493,8 @@ async def cmd_reassign(message: Message, db) -> None:
 @router.message(Command("export_basic"))
 async def cmd_export_basic(message: Message, db) -> None:
     """Send basic CSV export."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     data = await export_basic(db)
@@ -504,8 +505,8 @@ async def cmd_export_basic(message: Message, db) -> None:
 @router.message(Command("export_full"))
 async def cmd_export_full(message: Message, db) -> None:
     """Send full CSV export."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     data = await export_full(db)
@@ -516,8 +517,8 @@ async def cmd_export_full(message: Message, db) -> None:
 @router.message(Command("users"))
 async def cmd_users(message: Message, db) -> None:
     """List users with role and status filters."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
@@ -570,8 +571,8 @@ async def cmd_users(message: Message, db) -> None:
 @router.message(Command("set_role"))
 async def cmd_set_role(message: Message, db) -> None:
     """Assign role to a user by telegram id."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
@@ -597,8 +598,8 @@ async def cmd_set_role(message: Message, db) -> None:
 @router.message(Command("set_active"))
 async def cmd_set_active(message: Message, db) -> None:
     """Enable or disable a user account."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
@@ -631,8 +632,8 @@ async def cmd_set_active(message: Message, db) -> None:
 @router.message(Command("broadcast"))
 async def cmd_broadcast(message: Message, db) -> None:
     """Send admin broadcast to users by role."""
-    if not await _can_use_admin(message, db):
-        await message.answer("Нет доступа.")
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split(maxsplit=2)
@@ -670,4 +671,5 @@ async def cmd_broadcast(message: Message, db) -> None:
     await message.answer(
         f"Рассылка завершена. Успешно: {sent}, ошибок: {failed}, целевая роль: {role}."
     )
+
 
