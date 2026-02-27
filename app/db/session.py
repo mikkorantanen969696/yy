@@ -13,7 +13,17 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config.settings import settings
 
-engine_kwargs: dict = {"echo": False}
+engine_kwargs: dict = {
+    "echo": False,
+    # Reconnect if DB closed idle connection.
+    "pool_pre_ping": True,
+}
+connect_args: dict = {}
+
+is_postgres_asyncpg = settings.database_url.startswith("postgresql+asyncpg")
+if is_postgres_asyncpg:
+    # Avoid stale prepared statement cache issues after schema/type changes.
+    connect_args["statement_cache_size"] = 0
 
 # Optional SSL config for asyncpg (production Postgres).
 ssl_mode = (settings.db_ssl_mode or "").strip().lower()
@@ -28,7 +38,10 @@ if ssl_mode in {"require", "verify-ca", "verify-full"}:
         ssl_ctx.check_hostname = False
     else:
         ssl_ctx.check_hostname = ssl_mode == "verify-full"
-    engine_kwargs["connect_args"] = {"ssl": ssl_ctx}
+    connect_args["ssl"] = ssl_ctx
+
+if connect_args:
+    engine_kwargs["connect_args"] = connect_args
 
 # Create async engine based on DATABASE_URL.
 engine: AsyncEngine = create_async_engine(settings.database_url, **engine_kwargs)
