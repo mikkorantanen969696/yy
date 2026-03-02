@@ -237,8 +237,26 @@ def build_admin_panel_keyboard() -> InlineKeyboardMarkup:
     builder.add(InlineKeyboardButton(text="Пользователи", callback_data="admin:users"))
     builder.add(InlineKeyboardButton(text="Экспорт basic CSV", callback_data="admin:export_basic"))
     builder.add(InlineKeyboardButton(text="Экспорт full CSV", callback_data="admin:export_full"))
+    builder.add(InlineKeyboardButton(text="Хочу добавить роль", callback_data="admin:add_role"))
     builder.add(InlineKeyboardButton(text="Обновить меню", callback_data="admin:refresh"))
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def build_role_entry_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard for secret-word role entry."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="Войти в роль", callback_data="role_login:start"))
+    return builder.as_markup()
+
+
+def build_role_choice_keyboard() -> InlineKeyboardMarkup:
+    """Admin chooses which role to create invite for."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="Менеджер", callback_data="admin:add_role:manager"))
+    builder.add(InlineKeyboardButton(text="Администратор", callback_data="admin:add_role:admin"))
+    builder.add(InlineKeyboardButton(text="Отмена", callback_data="admin:add_role:cancel"))
+    builder.adjust(1)
     return builder.as_markup()
 
 

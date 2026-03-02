@@ -5,10 +5,13 @@ from __future__ import annotations
 
 from aiogram import Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from aiogram.types.input_file import BufferedInputFile
 
 from app.config.settings import settings
+from app.services.invites import create_role_invite, normalize_username
 from app.services.analytics import (
     count_orders,
     count_by_city,
@@ -40,11 +43,18 @@ from app.utils.constants import CITY_CHOICES, ORDER_STATUSES, ROLES
 from app.utils.keyboards import (
     build_admin_orders_filter_keyboard,
     build_admin_panel_keyboard,
+    build_role_choice_keyboard,
     build_admin_users_filter_keyboard,
 )
 from app.utils.text import format_user_link
 
 router = Router()
+
+
+class AddRoleFlow(StatesGroup):
+    """Admin flow for generating secret words."""
+
+    waiting_username = State()
 
 
 def _format_stats(
@@ -89,6 +99,7 @@ def _usage() -> str:
         "/broadcast [role|all] [текст] - рассылка пользователям\n"
         "/export_basic - экспорт CSV (основной)\n"
         "/export_full - экспорт CSV (полный)\n\n"
+        "Кнопка «Хочу добавить роль» - выдать секретное слово для @username\n\n"
         "ℹ️ Подробная инструкция: /help"
     )
 
@@ -154,7 +165,7 @@ async def cmd_admin(message: Message, db) -> None:
     await message.answer(_usage(), reply_markup=build_admin_panel_keyboard())
 
 
-@router.callback_query(lambda c: c.data and c.data.startswith("admin:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:") and not c.data.startswith("admin:add_role:"))
 async def admin_panel_callback(callback: CallbackQuery, db) -> None:
     """Handle admin panel button presses."""
     if not callback.message:
@@ -170,6 +181,14 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
     if action == "refresh":
         await callback.message.edit_text(_usage(), reply_markup=build_admin_panel_keyboard())
         await callback.answer("Меню обновлено.")
+        return
+
+    if action == "add_role":
+        await callback.message.answer(
+            "Выберите роль, которую хотите выдать новому пользователю:",
+            reply_markup=build_role_choice_keyboard(),
+        )
+        await callback.answer()
         return
 
     if action == "stats":
@@ -298,6 +317,79 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
         return
 
     await callback.answer("Неизвестное действие.")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:add_role:"))
+async def admin_add_role_choice(callback: CallbackQuery, state: FSMContext, db) -> None:
+    """Choose target role for secret-word invite."""
+    if not await _can_use_admin(callback.from_user.id, db):
+        await callback.answer("⛔ Нет доступа к админ-функциям.", show_alert=True)
+        return
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+
+    role = callback.data.split(":")[-1]
+    if role == "cancel":
+        await state.clear()
+        await callback.message.answer("Создание приглашения отменено.")
+        await callback.answer()
+        return
+
+    if role not in (ROLES["admin"], ROLES["manager"]):
+        await callback.answer("Неизвестная роль.", show_alert=True)
+        return
+
+    await state.set_state(AddRoleFlow.waiting_username)
+    await state.update_data(invite_role=role)
+    await callback.message.answer(
+        "Введите @username пользователя для выдачи роли.\n"
+        "Пример: @ivanov"
+    )
+    await callback.answer()
+
+
+@router.message(AddRoleFlow.waiting_username)
+async def admin_add_role_username(message: Message, state: FSMContext, db) -> None:
+    """Generate one-time secret word for target username."""
+    if not await _can_use_admin(message.from_user.id, db):
+        await message.answer("⛔ Нет доступа к админ-функциям.")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    role = data.get("invite_role")
+    raw_username = (message.text or "").strip()
+    username = normalize_username(raw_username)
+    if not username:
+        await message.answer("⛔ Укажите корректный @username.")
+        return
+
+    if role not in (ROLES["admin"], ROLES["manager"]):
+        await message.answer("⛔ Роль не выбрана. Начните заново через кнопку «Хочу добавить роль».")
+        await state.clear()
+        return
+
+    try:
+        invite = await create_role_invite(
+            db,
+            role=role,
+            target_username=username,
+            created_by=message.from_user.id,
+        )
+    except Exception as exc:
+        await message.answer(f"❌ Не удалось создать секретное слово: {exc}")
+        await state.clear()
+        return
+
+    await state.clear()
+    await message.answer(
+        "✅ Одноразовое секретное слово создано.\n"
+        f"Роль: {invite.role}\n"
+        f"Для username: @{invite.target_username}\n"
+        f"Секретное слово: <code>{invite.secret_word}</code>\n\n"
+        "Передайте слово пользователю. Он должен нажать «Войти в роль» и ввести его."
+    )
 
 
 @router.message(Command("stats"))

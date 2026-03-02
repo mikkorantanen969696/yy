@@ -54,6 +54,7 @@ async def set_role(session: AsyncSession, telegram_id: int, role: str) -> User:
         raise ValueError("Unknown role")
     user = await ensure_user(session, telegram_id)
     user.role = role
+    user.is_active = True
     await session.commit()
     await session.refresh(user)
     return user
