@@ -107,6 +107,6 @@ def is_admin(telegram_id: int, admin_ids: list[int]) -> bool:
 
 
 def has_role(user: User, role: str) -> bool:
-    """Check if user has expected role."""
-    return user.role == role
+    """Check if user has expected role and is active."""
+    return bool(user.is_active) and user.role == role
 

@@ -72,9 +72,95 @@ async def export_basic(session: AsyncSession) -> bytes:
     return _to_csv(rows, header)
 
 
+async def export_basic_for_manager(session: AsyncSession, manager_id: int) -> bytes:
+    """Export basic CSV only for manager-owned orders."""
+    result = await session.execute(select(Order).where(Order.manager_id == manager_id))
+    orders = result.scalars().all()
+
+    header = [
+        "id",
+        "city",
+        "date",
+        "time",
+        "status",
+        "manager_id",
+        "master_id",
+    ]
+
+    rows = []
+    for order in orders:
+        rows.append(
+            [
+                str(order.id),
+                order.city,
+                order.date,
+                order.time,
+                order.status,
+                str(order.manager_id or ""),
+                str(order.master_id or ""),
+            ]
+        )
+
+    return _to_csv(rows, header)
+
+
 async def export_full(session: AsyncSession) -> bytes:
     """Export full CSV with all fields and photo ids."""
     result = await session.execute(select(Order))
+    orders = result.scalars().all()
+    photos = await _load_photos(session)
+
+    header = [
+        "id",
+        "city",
+        "address",
+        "date",
+        "time",
+        "type",
+        "equipment",
+        "conditions",
+        "comment",
+        "client_contact",
+        "manager_contact",
+        "manager_id",
+        "master_id",
+        "status",
+        "created_at",
+        "photos_before",
+        "photos_after",
+    ]
+
+    rows = []
+    for order in orders:
+        order_photos = photos.get(order.id, {"before": [], "after": []})
+        rows.append(
+            [
+                str(order.id),
+                order.city,
+                order.address,
+                order.date,
+                order.time,
+                order.type,
+                order.equipment,
+                order.conditions,
+                order.comment,
+                order.client_contact,
+                order.manager_contact,
+                str(order.manager_id or ""),
+                str(order.master_id or ""),
+                order.status,
+                order.created_at.isoformat() if order.created_at else "",
+                ",".join(order_photos["before"]),
+                ",".join(order_photos["after"]),
+            ]
+        )
+
+    return _to_csv(rows, header)
+
+
+async def export_full_for_manager(session: AsyncSession, manager_id: int) -> bytes:
+    """Export full CSV only for manager-owned orders."""
+    result = await session.execute(select(Order).where(Order.manager_id == manager_id))
     orders = result.scalars().all()
     photos = await _load_photos(session)
 

@@ -6,8 +6,10 @@ from __future__ import annotations
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
+from aiogram.types.input_file import BufferedInputFile
 
 from app.config.settings import settings
+from app.services.exports import export_basic_for_manager, export_full_for_manager
 from app.services.orders import list_orders_by_manager
 from app.services.users import ensure_user, has_role, is_admin
 from app.utils.constants import ROLES
@@ -40,6 +42,8 @@ async def cmd_manager(message: Message, db) -> None:
         "/new_order - создать новую заявку\n"
         "/my_orders - посмотреть мои заявки\n"
         "/my_stats - статистика по моим заявкам\n\n"
+        "/my_export_basic - выгрузка (основная)\n"
+        "/my_export_full - выгрузка (полная)\n\n"
         "ℹ️ Подробная инструкция: /help"
     )
 
@@ -72,3 +76,29 @@ async def cmd_my_stats(message: Message, db) -> None:
         f"Всего заявок: {total}\n"
         f"Завершено: {completed}"
     )
+
+
+@router.message(Command("my_export_basic"))
+async def cmd_my_export_basic(message: Message, db) -> None:
+    """Send manager-scoped basic CSV export."""
+    user = await ensure_user(db, message.from_user.id)
+    if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
+        await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
+        return
+
+    data = await export_basic_for_manager(db, user.telegram_id)
+    file = BufferedInputFile(data, filename=f"orders_basic_manager_{user.telegram_id}.csv")
+    await message.answer_document(file)
+
+
+@router.message(Command("my_export_full"))
+async def cmd_my_export_full(message: Message, db) -> None:
+    """Send manager-scoped full CSV export."""
+    user = await ensure_user(db, message.from_user.id)
+    if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
+        await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
+        return
+
+    data = await export_full_for_manager(db, user.telegram_id)
+    file = BufferedInputFile(data, filename=f"orders_full_manager_{user.telegram_id}.csv")
+    await message.answer_document(file)

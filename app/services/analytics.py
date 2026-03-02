@@ -3,6 +3,8 @@ Analytics and metrics helpers.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,12 +46,51 @@ async def count_by_city(session: AsyncSession) -> dict[str, int]:
 
 async def average_response_time_minutes(session: AsyncSession) -> float:
     """Average response time in minutes based on responses table."""
-    result = await session.execute(select(func.avg(Response.id)))
+    first_responses_sq = (
+        select(
+            Response.order_id.label("order_id"),
+            func.min(Response.response_time).label("first_response_time"),
+        )
+        .group_by(Response.order_id)
+        .subquery()
+    )
 
-    # Placeholder: response_time tracking will be implemented later.
-    # Return 0.0 for now to avoid misleading data.
-    _ = result.scalar()
-    return 0.0
+    result = await session.execute(
+        select(Order.created_at, first_responses_sq.c.first_response_time).join(
+            first_responses_sq,
+            first_responses_sq.c.order_id == Order.id,
+        )
+    )
+
+    deltas: list[float] = []
+    for created_at, first_response_time in result.all():
+        if isinstance(created_at, datetime) and isinstance(first_response_time, datetime):
+            delta = (first_response_time - created_at).total_seconds() / 60.0
+            if delta >= 0:
+                deltas.append(delta)
+
+    if not deltas:
+        return 0.0
+    return sum(deltas) / len(deltas)
+
+
+async def taken_in_work_percent(session: AsyncSession) -> float:
+    """Percent of orders that were taken into work."""
+    total_result = await session.execute(select(func.count(Order.id)))
+    total = int(total_result.scalar() or 0)
+    if total == 0:
+        return 0.0
+
+    taken_statuses = (
+        ORDER_STATUSES["assigned"],
+        ORDER_STATUSES["in_progress"],
+        ORDER_STATUSES["completed"],
+    )
+    taken_result = await session.execute(
+        select(func.count(Order.id)).where(Order.status.in_(taken_statuses))
+    )
+    taken = int(taken_result.scalar() or 0)
+    return (taken * 100.0) / total
 
 
 async def top_masters(session: AsyncSession, limit: int = 5) -> list[tuple[int, int]]:

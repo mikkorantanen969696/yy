@@ -15,6 +15,8 @@ from app.services.analytics import (
     count_by_status,
     top_managers,
     top_masters,
+    average_response_time_minutes,
+    taken_in_work_percent,
 )
 from app.services.exports import export_basic, export_full
 from app.services.orders import (
@@ -45,7 +47,12 @@ from app.utils.text import format_user_link
 router = Router()
 
 
-def _format_stats(total: int, by_status: dict[str, int]) -> str:
+def _format_stats(
+    total: int,
+    by_status: dict[str, int],
+    taken_percent: float,
+    avg_response_minutes: float,
+) -> str:
     """Build a short stats message."""
     return (
         f"Всего заявок: {total}\n"
@@ -55,6 +62,8 @@ def _format_stats(total: int, by_status: dict[str, int]) -> str:
         f"В процессе: {by_status.get('in_progress', 0)}\n"
         f"Завершена: {by_status.get('completed', 0)}\n"
         f"Отменена: {by_status.get('cancelled', 0)}\n"
+        f"% взятых в работу: {taken_percent:.1f}%\n"
+        f"Среднее время отклика: {avg_response_minutes:.1f} мин.\n"
     )
 
 
@@ -168,8 +177,10 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
         by_city = await count_by_city(db)
         managers = await top_managers(db)
         masters = await top_masters(db)
+        taken_percent = await taken_in_work_percent(db)
+        avg_response = await average_response_time_minutes(db)
 
-        stats_text = _format_stats(total, by_status)
+        stats_text = _format_stats(total, by_status, taken_percent, avg_response)
         if by_city:
             stats_text += "\nТоп городов:\n"
             for city, cnt in list(by_city.items())[:5]:
@@ -300,8 +311,10 @@ async def cmd_stats(message: Message, db) -> None:
     by_city = await count_by_city(db)
     managers = await top_managers(db)
     masters = await top_masters(db)
+    taken_percent = await taken_in_work_percent(db)
+    avg_response = await average_response_time_minutes(db)
 
-    stats_text = _format_stats(total, by_status)
+    stats_text = _format_stats(total, by_status, taken_percent, avg_response)
 
     if by_city:
         stats_text += "\nТоп городов:\n"

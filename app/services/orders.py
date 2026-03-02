@@ -10,8 +10,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.order import Order
 from app.models.order_photo import OrderPhoto
+from app.models.order_visibility import OrderVisibility
 from app.models.response import Response
 from app.utils.constants import ORDER_STATUSES
+
+DEFAULT_MASTER_VISIBLE_FIELDS = {
+    "date",
+    "time",
+    "address",
+    "type",
+    "equipment",
+    "conditions",
+    "comment",
+}
 
 
 async def create_order(session: AsyncSession, data: dict) -> Order:
@@ -107,4 +118,49 @@ async def add_photo(session: AsyncSession, order_id: int, file_id: str, photo_ty
     await session.commit()
     await session.refresh(photo)
     return photo
+
+
+def _normalize_visible_fields(fields: set[str]) -> str:
+    """Serialize selected fields as a stable comma-separated list."""
+    clean = {f.strip() for f in fields if f and f.strip()}
+    return ",".join(sorted(clean))
+
+
+def _parse_visible_fields(value: str | None) -> set[str]:
+    """Deserialize comma-separated fields from DB."""
+    if not value:
+        return set(DEFAULT_MASTER_VISIBLE_FIELDS)
+    return {part.strip() for part in value.split(",") if part.strip()}
+
+
+async def set_master_visible_fields(session: AsyncSession, order_id: int, fields: set[str]) -> None:
+    """Create or update visibility settings for an order."""
+    result = await session.execute(select(OrderVisibility).where(OrderVisibility.order_id == order_id))
+    record = result.scalar_one_or_none()
+    payload = _normalize_visible_fields(fields)
+    if record:
+        record.fields = payload
+    else:
+        record = OrderVisibility(order_id=order_id, fields=payload)
+        session.add(record)
+    await session.commit()
+
+
+async def get_master_visible_fields(session: AsyncSession, order_id: int) -> set[str]:
+    """Load visibility settings for an order."""
+    result = await session.execute(select(OrderVisibility).where(OrderVisibility.order_id == order_id))
+    record = result.scalar_one_or_none()
+    return _parse_visible_fields(record.fields if record else "")
+
+
+async def get_order_photo_counts(session: AsyncSession, order_id: int) -> dict[str, int]:
+    """Return before/after photo counters for an order."""
+    result = await session.execute(select(OrderPhoto.type).where(OrderPhoto.order_id == order_id))
+    out = {"before": 0, "after": 0}
+    for photo_type in result.scalars().all():
+        if photo_type == "after":
+            out["after"] += 1
+        else:
+            out["before"] += 1
+    return out
 

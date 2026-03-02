@@ -15,6 +15,17 @@ from app.utils.constants import (
     CONDITION_OPTIONS,
 )
 
+MASTER_VISIBLE_FIELD_LABELS = {
+    "date": "Дата",
+    "time": "Время",
+    "address": "Адрес",
+    "type": "Тип уборки",
+    "equipment": "Оборудование",
+    "conditions": "Условия",
+    "comment": "Комментарий",
+    "client_contact": "Контакт клиента",
+}
+
 
 def build_city_keyboard() -> InlineKeyboardMarkup:
     """Choose city topic for order publishing."""
@@ -113,6 +124,24 @@ def build_photo_actions_keyboard(order_id: int) -> InlineKeyboardMarkup:
     builder.add(InlineKeyboardButton(text="Загрузить фото ДО", callback_data=f"photo_before:{order_id}"))
     builder.add(InlineKeyboardButton(text="Загрузить фото ПОСЛЕ", callback_data=f"photo_after:{order_id}"))
     builder.add(InlineKeyboardButton(text="Завершить заказ", callback_data=f"finish:{order_id}"))
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_visibility_keyboard(selected: set[str]) -> InlineKeyboardMarkup:
+    """Field visibility setup for master card."""
+    builder = InlineKeyboardBuilder()
+    for key, label in MASTER_VISIBLE_FIELD_LABELS.items():
+        marker = "✅" if key in selected else "⬜"
+        builder.add(
+            InlineKeyboardButton(
+                text=f"{marker} {label}",
+                callback_data=f"vis:toggle:{key}",
+            )
+        )
+    builder.add(InlineKeyboardButton(text="Готово", callback_data="vis:done"))
+    builder.add(InlineKeyboardButton(text="Назад", callback_data="flow:back"))
+    builder.add(InlineKeyboardButton(text="Отмена", callback_data="flow:cancel"))
     builder.adjust(1)
     return builder.as_markup()
 
