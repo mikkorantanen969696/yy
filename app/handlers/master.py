@@ -18,9 +18,9 @@ router = Router()
 def _format_orders(orders) -> str:
     """Format orders list for message."""
     if not orders:
-        return "📭 У вас пока нет заказов."
+        return "👷 Роль собеседника: мастер\n📭 У вас пока нет заказов."
 
-    lines = ["🧰 Ваши последние заказы:"]
+    lines = ["👷 Роль собеседника: мастер", "🧰 Ваши последние заказы:"]
     for order in orders[-20:]:
         manager_link = format_user_link(order.manager_id, "менеджер")
         lines.append(
@@ -37,7 +37,8 @@ async def cmd_profile(message: Message, db) -> None:
         await message.answer("⛔ Нет доступа. Роль мастера не назначена.")
         return
     await message.answer(
-        "👷 Профиль мастера\n"
+        "👷 Роль: мастер\n"
+        "Профиль мастера\n"
         "/my_jobs - мои заказы\n"
         "/my_stats - моя статистика\n\n"
         "ℹ️ Подробная инструкция: /help"
@@ -68,6 +69,7 @@ async def cmd_my_stats(message: Message, db) -> None:
     total = len(orders)
     completed = len([o for o in orders if o.status == "completed"])
     await message.answer(
+        f"👷 Роль собеседника: мастер\n"
         f"📊 Моя статистика:\n"
         f"Всего заказов: {total}\n"
         f"Завершено: {completed}"

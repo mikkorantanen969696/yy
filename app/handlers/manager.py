@@ -9,7 +9,7 @@ from aiogram.types import Message
 from aiogram.types.input_file import BufferedInputFile
 
 from app.config.settings import settings
-from app.services.exports import export_basic_for_manager, export_full_for_manager
+from app.services.exports import export_basic_for_manager
 from app.services.orders import list_orders_by_manager
 from app.services.users import ensure_user, has_role, is_admin
 from app.utils.constants import ROLES
@@ -20,9 +20,9 @@ router = Router()
 def _format_orders(orders) -> str:
     """Format orders list for message."""
     if not orders:
-        return "📭 У вас пока нет заявок."
+        return "👨‍💼 Роль собеседника: менеджер\n📭 У вас пока нет заявок."
 
-    lines = ["📋 Ваши последние заявки:"]
+    lines = ["👨‍💼 Роль собеседника: менеджер", "📋 Ваши последние заявки:"]
     for order in orders[-20:]:
         lines.append(
             f"#{order.id} | {order.city} | {order.date} {order.time} | {order.status}"
@@ -38,12 +38,13 @@ async def cmd_manager(message: Message, db) -> None:
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
     await message.answer(
-        "👨‍💼 Панель менеджера\n"
+        "👨‍💼 Роль: менеджер\n"
+        "Панель менеджера\n"
         "/new_order - создать новую заявку\n"
         "/my_orders - посмотреть мои заявки\n"
         "/my_stats - статистика по моим заявкам\n\n"
         "/my_export_basic - выгрузка (основная)\n"
-        "/my_export_full - выгрузка (полная)\n\n"
+        "Полная выгрузка доступна только администратору.\n\n"
         "ℹ️ Подробная инструкция: /help"
     )
 
@@ -72,6 +73,7 @@ async def cmd_my_stats(message: Message, db) -> None:
     total = len(orders)
     completed = len([o for o in orders if o.status == "completed"])
     await message.answer(
+        f"👨‍💼 Роль собеседника: менеджер\n"
         f"📊 Моя статистика:\n"
         f"Всего заявок: {total}\n"
         f"Завершено: {completed}"
@@ -93,12 +95,9 @@ async def cmd_my_export_basic(message: Message, db) -> None:
 
 @router.message(Command("my_export_full"))
 async def cmd_my_export_full(message: Message, db) -> None:
-    """Send manager-scoped full CSV export."""
+    """Managers are restricted to basic export only."""
     user = await ensure_user(db, message.from_user.id)
     if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
-
-    data = await export_full_for_manager(db, user.telegram_id)
-    file = BufferedInputFile(data, filename=f"orders_full_manager_{user.telegram_id}.csv")
-    await message.answer_document(file)
+    await message.answer("⛔ Менеджеру доступна только основная выгрузка: /my_export_basic")

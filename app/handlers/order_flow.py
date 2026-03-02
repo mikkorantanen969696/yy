@@ -1,5 +1,5 @@
-﻿"""
-Order creation and state machine implementation.
+"""
+Order creation and photo workflow handlers.
 """
 from __future__ import annotations
 
@@ -15,75 +15,87 @@ from aiogram.types import CallbackQuery, Message
 
 from app.config.settings import settings
 from app.services.orders import (
-    create_order,
-    get_order,
-    assign_master,
-    unassign_master,
-    set_status,
-    register_response,
     add_photo,
-    set_master_visible_fields,
+    assign_master,
+    create_order,
     get_master_visible_fields,
+    get_order,
     get_order_photo_counts,
+    get_order_photo_type_count,
+    register_response,
+    set_master_visible_fields,
+    set_status,
+    unassign_master,
 )
 from app.services.telegram import send_to_city_topic
 from app.services.users import ensure_user, has_role, is_admin
 from app.utils.constants import (
-    ROLES,
-    ORDER_STATUSES,
     CITY_CHOICES,
     CLEANING_TYPES,
-    EQUIPMENT_OPTIONS,
     CONDITION_OPTIONS,
+    EQUIPMENT_OPTIONS,
+    ORDER_STATUSES,
+    ROLES,
 )
 from app.utils.keyboards import (
-    build_city_keyboard,
-    build_date_keyboard,
-    build_cleaning_type_keyboard,
-    build_equipment_keyboard,
-    build_conditions_keyboard,
-    build_confirm_keyboard,
-    build_skip_keyboard,
+    MASTER_VISIBLE_FIELD_LABELS,
+    build_form_city_keyboard,
+    build_form_cleaning_type_keyboard,
+    build_form_conditions_keyboard,
+    build_form_date_keyboard,
+    build_form_equipment_keyboard,
     build_master_accept_keyboard,
+    build_order_menu_keyboard,
     build_photo_actions_keyboard,
     build_visibility_keyboard,
-    MASTER_VISIBLE_FIELD_LABELS,
 )
-from app.utils.text import format_order_brief, format_manager_contact, format_user_link
+from app.utils.text import format_manager_contact, format_order_brief, format_user_link
 
 router = Router()
 logger = logging.getLogger(__name__)
 
+DEFAULT_VISIBLE_FIELDS = {"date", "time", "address", "type", "equipment", "conditions", "comment"}
+REQUIRED_ORDER_FIELDS = (
+    "city",
+    "date",
+    "time",
+    "address",
+    "cleaning_type",
+    "equipment",
+    "conditions",
+    "client_contact",
+)
+TEXT_INPUT_FIELDS = {"date", "time", "address", "comment", "client_contact"}
+MIN_PHOTOS_PER_TYPE = 3
+MAX_PHOTOS_PER_TYPE = 5
+
 
 class OrderFlow(StatesGroup):
-    """FSM states for manager order creation."""
+    """FSM states for one-message order constructor."""
 
-    city = State()
-    date = State()
-    time = State()
-    address = State()
-    cleaning_type = State()
-    equipment = State()
-    conditions = State()
-    comment = State()
-    client_contact = State()
+    menu = State()
+    input_text = State()
     visible_fields = State()
-    confirm = State()
 
 
 class PhotoFlow(StatesGroup):
-    """FSM for photo upload by master."""
+    """FSM state for master photo uploads."""
 
     waiting_photo = State()
 
 
 def _format_date(date_obj: datetime) -> str:
-    """Format date as dd.mm.yyyy string."""
+    """Format date as dd.mm.yyyy."""
     return date_obj.strftime("%d.%m.%Y")
 
 
-def _build_form_text(data: dict, prompt: str) -> str:
-    """Build a single editable order form message with current values."""
+def _role_label(is_admin_user: bool) -> str:
+    """Role badge for order creation message."""
+    return "администратор" if is_admin_user else "менеджер"
+
+
+def _build_form_text(data: dict, prompt: str, role_label: str) -> str:
+    """Render one persistent order constructor message."""
     city_key = data.get("city", "")
     city_value = CITY_CHOICES.get(city_key, city_key) or "-"
     date_value = data.get("date", "") or "-"
@@ -94,16 +106,17 @@ def _build_form_text(data: dict, prompt: str) -> str:
     conditions_value = data.get("conditions", "") or "-"
     comment_value = data.get("comment", "") or "-"
     client_contact_value = data.get("client_contact", "") or "-"
-    selected_fields = data.get("visible_fields", set())
+    selected_fields = set(data.get("visible_fields", set()))
     visible_items = [
         MASTER_VISIBLE_FIELD_LABELS[key]
         for key in MASTER_VISIBLE_FIELD_LABELS
         if key in selected_fields
     ]
-    visible_value = ", ".join(visible_items) if visible_items else "ничего (не рекомендуется)"
+    visible_value = ", ".join(visible_items) if visible_items else "-"
 
     return (
-        "📝 Создание заявки\n\n"
+        "📝 Конструктор заявки\n"
+        f"Роль собеседника: {role_label}\n\n"
         f"🏙️ Город: {city_value}\n"
         f"📅 Дата: {date_value}\n"
         f"⏰ Время: {time_value}\n"
@@ -112,16 +125,35 @@ def _build_form_text(data: dict, prompt: str) -> str:
         f"🧰 Оборудование: {equipment_value}\n"
         f"💸 Условия: {conditions_value}\n"
         f"💬 Комментарий: {comment_value}\n"
-        f"📞 Контакт клиента: {client_contact_value}\n\n"
+        f"📞 Контакт клиента: {client_contact_value}\n"
         f"👁️ Видно мастеру: {visible_value}\n\n"
         f"{prompt}"
     )
 
 
+def _missing_fields(data: dict) -> list[str]:
+    """Return required fields that are not filled yet."""
+    labels = {
+        "city": "Город",
+        "date": "Дата",
+        "time": "Время",
+        "address": "Адрес",
+        "cleaning_type": "Тип уборки",
+        "equipment": "Оборудование",
+        "conditions": "Условия",
+        "client_contact": "Контакт клиента",
+    }
+    out: list[str] = []
+    for key in REQUIRED_ORDER_FIELDS:
+        if not data.get(key):
+            out.append(labels[key])
+    return out
+
+
 def _build_master_text(order, visible_fields: set[str]) -> str:
-    """Format order card for master based on manager-selected visibility."""
+    """Format order card for master based on selected visibility."""
     city_label = CITY_CHOICES.get(order.city, order.city)
-    lines = [f"Заявка #{order.id}", f"Город: {city_label}"]
+    lines = ["Роль собеседника: мастер", f"Заявка #{order.id}", f"Город: {city_label}"]
 
     if "date" in visible_fields or "time" in visible_fields:
         date_part = order.date if "date" in visible_fields else ""
@@ -143,20 +175,14 @@ def _build_master_text(order, visible_fields: set[str]) -> str:
     return "\n".join(lines)
 
 
-async def _edit_form_message(
-    bot,
-    chat_id: int,
-    state: FSMContext,
-    prompt: str,
-    reply_markup=None,
-) -> None:
-    """Edit one persistent message used for the whole order flow."""
+async def _edit_form_message(bot, chat_id: int, state: FSMContext, prompt: str, reply_markup=None) -> None:
+    """Edit persistent constructor message."""
     data = await state.get_data()
     form_message_id = data.get("form_message_id")
     if not form_message_id:
         return
 
-    text = _build_form_text(data, prompt)
+    text = _build_form_text(data, prompt, data.get("creator_role_label", "менеджер"))
     try:
         await bot.edit_message_text(
             chat_id=chat_id,
@@ -171,13 +197,13 @@ async def _edit_form_message(
 
 
 async def _ensure_manager(message: Message, db) -> bool:
-    """Verify manager role or admin."""
+    """Managers and admins can create orders."""
     user = await ensure_user(db, message.from_user.id)
     return has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())
 
 
 async def _notify_manager(bot, manager_id: int | None, text: str) -> None:
-    """Send event notification to manager and ignore delivery errors."""
+    """Send manager notification and ignore delivery errors."""
     if not manager_id:
         return
     try:
@@ -186,232 +212,251 @@ async def _notify_manager(bot, manager_id: int | None, text: str) -> None:
         logger.exception("Manager notification failed for %s", manager_id)
 
 
+async def _show_main_menu(callback_or_message, state: FSMContext, prompt: str = "Выберите поле для заполнения:") -> None:
+    """Render constructor main menu."""
+    bot = callback_or_message.bot
+    chat_id = callback_or_message.chat.id
+    data = await state.get_data()
+    await state.set_state(OrderFlow.menu)
+    await _edit_form_message(
+        bot,
+        chat_id,
+        state,
+        prompt,
+        build_order_menu_keyboard(data),
+    )
+
+
 @router.message(Command("new_order"))
 async def start_order_flow(message: Message, state: FSMContext, db) -> None:
-    """Begin order creation flow for managers."""
+    """Start one-message order constructor."""
     if not await _ensure_manager(message, db):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
+
+    creator_role_label = _role_label(is_admin(message.from_user.id, settings.get_admin_ids()))
     await state.clear()
-    await state.set_state(OrderFlow.city)
+    await state.set_state(OrderFlow.menu)
     form_message = await message.answer(
-        _build_form_text({}, "Выберите город:"),
-        reply_markup=build_city_keyboard(),
+        _build_form_text(
+            {"visible_fields": set(DEFAULT_VISIBLE_FIELDS)},
+            "Выберите поле для заполнения:",
+            creator_role_label,
+        ),
+        reply_markup=build_order_menu_keyboard({}),
     )
-    await state.update_data(form_message_id=form_message.message_id)
+    await state.update_data(
+        form_message_id=form_message.message_id,
+        visible_fields=set(DEFAULT_VISIBLE_FIELDS),
+        creator_role_label=creator_role_label,
+    )
 
 
 @router.callback_query(lambda c: c.data == "flow:cancel")
 async def flow_cancel(callback: CallbackQuery, state: FSMContext) -> None:
-    """Cancel any active flow."""
+    """Cancel constructor/photo flow."""
     await state.clear()
-    await callback.message.edit_text("🛑 Сценарий создания заявки отменен.")
+    if callback.message:
+        await callback.message.edit_text("🛑 Сценарий отменен.")
+    await callback.answer()
 
 
 @router.callback_query(lambda c: c.data == "flow:back")
 async def flow_back(callback: CallbackQuery, state: FSMContext) -> None:
-    """Handle back navigation by inspecting current state."""
-    current = await state.get_state()
+    """Back action inside constructor."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+    await _show_main_menu(callback.message, state)
+    await callback.answer()
 
-    if current == OrderFlow.date.state:
-        await state.set_state(OrderFlow.city)
-        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Выберите город:", build_city_keyboard())
+
+@router.callback_query(lambda c: c.data == "form:menu")
+async def form_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    """Explicit return to constructor main menu."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
         return
-    if current == OrderFlow.time.state:
-        await state.set_state(OrderFlow.date)
-        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Выберите дату:", build_date_keyboard())
+    await _show_main_menu(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("form:edit:"))
+async def form_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
+    """Open editor for selected field."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
         return
-    if current == OrderFlow.address.state:
-        await state.set_state(OrderFlow.time)
-        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Введите время (например 14:00):")
+
+    field = callback.data.split(":", 2)[2]
+    await state.update_data(input_field=field)
+
+    if field == "city":
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Выберите город:", build_form_city_keyboard())
+        await callback.answer()
         return
-    if current == OrderFlow.cleaning_type.state:
-        await state.set_state(OrderFlow.address)
-        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Введите адрес:")
+    if field == "date":
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Выберите дату:", build_form_date_keyboard())
+        await callback.answer()
         return
-    if current == OrderFlow.equipment.state:
-        await state.set_state(OrderFlow.cleaning_type)
+    if field == "cleaning_type":
         await _edit_form_message(
             callback.bot,
             callback.message.chat.id,
             state,
             "Выберите тип уборки:",
-            build_cleaning_type_keyboard(),
+            build_form_cleaning_type_keyboard(),
         )
+        await callback.answer()
         return
-    if current == OrderFlow.conditions.state:
-        await state.set_state(OrderFlow.equipment)
-        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Оборудование:", build_equipment_keyboard())
-        return
-    if current == OrderFlow.comment.state:
-        await state.set_state(OrderFlow.conditions)
-        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Условия:", build_conditions_keyboard())
-        return
-    if current == OrderFlow.client_contact.state:
-        await state.set_state(OrderFlow.comment)
+    if field == "equipment":
         await _edit_form_message(
             callback.bot,
             callback.message.chat.id,
             state,
-            "Комментарий (можно пропустить):",
-            build_skip_keyboard(),
+            "Выберите вариант оборудования:",
+            build_form_equipment_keyboard(),
         )
+        await callback.answer()
         return
-    if current == OrderFlow.confirm.state:
+    if field == "conditions":
+        await _edit_form_message(
+            callback.bot,
+            callback.message.chat.id,
+            state,
+            "Выберите условия:",
+            build_form_conditions_keyboard(),
+        )
+        await callback.answer()
+        return
+    if field == "visible":
+        selected = set((await state.get_data()).get("visible_fields", set(DEFAULT_VISIBLE_FIELDS)))
         await state.set_state(OrderFlow.visible_fields)
-        data = await state.get_data()
-        selected = set(data.get("visible_fields", set()))
         await _edit_form_message(
             callback.bot,
             callback.message.chat.id,
             state,
-            "Отметьте, какие поля можно показывать мастеру:",
+            "Отметьте поля, видимые мастеру:",
             build_visibility_keyboard(selected),
         )
+        await callback.answer()
         return
-    if current == OrderFlow.visible_fields.state:
-        await state.set_state(OrderFlow.client_contact)
-        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Контакт клиента (только для менеджера/владельца):")
-        return
-
-    await _edit_form_message(callback.bot, callback.message.chat.id, state, "↩️ Нечего откатывать.")
-
-
-@router.callback_query(lambda c: c.data.startswith("city:"))
-async def city_selected(callback: CallbackQuery, state: FSMContext) -> None:
-    """Store city and move to date selection."""
-    city_key = callback.data.split(":", 1)[1]
-    await state.update_data(city=city_key)
-    await state.set_state(OrderFlow.date)
-    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Выберите дату:", build_date_keyboard())
-
-
-@router.callback_query(lambda c: c.data.startswith("date:"))
-async def date_selected(callback: CallbackQuery, state: FSMContext) -> None:
-    """Handle quick date selection."""
-    data = callback.data.split(":", 1)[1]
-
-    if data == "today":
-        date_value = _format_date(datetime.now())
-    elif data == "tomorrow":
-        date_value = _format_date(datetime.now() + timedelta(days=1))
-    else:
-        await _edit_form_message(callback.bot, callback.message.chat.id, state, "Введите дату (дд.мм.гггг):")
-        await state.set_state(OrderFlow.date)
-        await state.update_data(date_manual=True)
+    if field in TEXT_INPUT_FIELDS:
+        await state.set_state(OrderFlow.input_text)
+        prompts = {
+            "date": "Введите дату в формате дд.мм.гггг:",
+            "time": "Введите время (например 14:00):",
+            "address": "Введите адрес:",
+            "comment": "Введите комментарий (или '-' чтобы очистить):",
+            "client_contact": "Введите контакт клиента:",
+        }
+        await _edit_form_message(callback.bot, callback.message.chat.id, state, prompts[field])
+        await callback.answer()
         return
 
-    await state.update_data(date=date_value)
-    await state.set_state(OrderFlow.time)
-    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Введите время (например 14:00):")
+    await callback.answer("Поле не поддерживается.", show_alert=True)
 
 
-@router.message(OrderFlow.date)
-async def date_manual(message: Message, state: FSMContext) -> None:
-    """Manual date entry."""
-    text = message.text.strip()
-    await state.update_data(date=text)
-    await state.set_state(OrderFlow.time)
-    await _edit_form_message(message.bot, message.chat.id, state, "Введите время (например 14:00):")
+@router.callback_query(lambda c: c.data and c.data.startswith("formcity:"))
+async def form_city_selected(callback: CallbackQuery, state: FSMContext) -> None:
+    """Set city and return to menu."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+    await state.update_data(city=callback.data.split(":", 1)[1])
+    await _show_main_menu(callback.message, state, "Город сохранен. Выберите следующее поле:")
+    await callback.answer("Город сохранен.")
 
 
-@router.message(OrderFlow.time)
-async def time_entered(message: Message, state: FSMContext) -> None:
-    """Store time and ask for address."""
-    await state.update_data(time=message.text.strip())
-    await state.set_state(OrderFlow.address)
-    await _edit_form_message(message.bot, message.chat.id, state, "Введите адрес:")
+@router.callback_query(lambda c: c.data and c.data.startswith("formdate:"))
+async def form_date_selected(callback: CallbackQuery, state: FSMContext) -> None:
+    """Set date quick value or switch to text input."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+    value = callback.data.split(":", 1)[1]
+    if value == "today":
+        await state.update_data(date=_format_date(datetime.now()))
+        await _show_main_menu(callback.message, state, "Дата сохранена. Выберите следующее поле:")
+        await callback.answer("Дата сохранена.")
+        return
+    if value == "tomorrow":
+        await state.update_data(date=_format_date(datetime.now() + timedelta(days=1)))
+        await _show_main_menu(callback.message, state, "Дата сохранена. Выберите следующее поле:")
+        await callback.answer("Дата сохранена.")
+        return
+
+    await state.update_data(input_field="date")
+    await state.set_state(OrderFlow.input_text)
+    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Введите дату в формате дд.мм.гггг:")
+    await callback.answer()
 
 
-@router.message(OrderFlow.address)
-async def address_entered(message: Message, state: FSMContext) -> None:
-    """Store address and ask for cleaning type."""
-    await state.update_data(address=message.text.strip())
-    await state.set_state(OrderFlow.cleaning_type)
-    await _edit_form_message(
-        message.bot,
-        message.chat.id,
-        state,
-        "Выберите тип уборки:",
-        build_cleaning_type_keyboard(),
-    )
+@router.callback_query(lambda c: c.data and c.data.startswith("formtype:"))
+async def form_type_selected(callback: CallbackQuery, state: FSMContext) -> None:
+    """Set cleaning type and return to menu."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+    key = callback.data.split(":", 1)[1]
+    await state.update_data(cleaning_type=CLEANING_TYPES.get(key, key))
+    await _show_main_menu(callback.message, state, "Тип уборки сохранен. Выберите следующее поле:")
+    await callback.answer("Сохранено.")
 
 
-@router.callback_query(lambda c: c.data.startswith("type:"))
-async def type_selected(callback: CallbackQuery, state: FSMContext) -> None:
-    """Store cleaning type and ask for equipment."""
-    type_key = callback.data.split(":", 1)[1]
-    await state.update_data(cleaning_type=CLEANING_TYPES.get(type_key, type_key))
-    await state.set_state(OrderFlow.equipment)
-    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Оборудование:", build_equipment_keyboard())
+@router.callback_query(lambda c: c.data and c.data.startswith("formequip:"))
+async def form_equipment_selected(callback: CallbackQuery, state: FSMContext) -> None:
+    """Set equipment and return to menu."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+    key = callback.data.split(":", 1)[1]
+    await state.update_data(equipment=EQUIPMENT_OPTIONS.get(key, key))
+    await _show_main_menu(callback.message, state, "Оборудование сохранено. Выберите следующее поле:")
+    await callback.answer("Сохранено.")
 
 
-@router.callback_query(lambda c: c.data.startswith("equip:"))
-async def equipment_selected(callback: CallbackQuery, state: FSMContext) -> None:
-    """Store equipment choice and ask for conditions."""
-    equip_key = callback.data.split(":", 1)[1]
-    await state.update_data(equipment=EQUIPMENT_OPTIONS.get(equip_key, equip_key))
-    await state.set_state(OrderFlow.conditions)
-    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Условия:", build_conditions_keyboard())
+@router.callback_query(lambda c: c.data and c.data.startswith("formcond:"))
+async def form_conditions_selected(callback: CallbackQuery, state: FSMContext) -> None:
+    """Set conditions and return to menu."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+    key = callback.data.split(":", 1)[1]
+    await state.update_data(conditions=CONDITION_OPTIONS.get(key, key))
+    await _show_main_menu(callback.message, state, "Условия сохранены. Выберите следующее поле:")
+    await callback.answer("Сохранено.")
 
 
-@router.callback_query(lambda c: c.data.startswith("cond:"))
-async def conditions_selected(callback: CallbackQuery, state: FSMContext) -> None:
-    """Store conditions and ask for comment."""
-    cond_key = callback.data.split(":", 1)[1]
-    await state.update_data(conditions=CONDITION_OPTIONS.get(cond_key, cond_key))
-    await state.set_state(OrderFlow.comment)
-    await _edit_form_message(
-        callback.bot,
-        callback.message.chat.id,
-        state,
-        "Комментарий (можно пропустить):",
-        build_skip_keyboard(),
-    )
+@router.message(OrderFlow.input_text)
+async def form_text_input(message: Message, state: FSMContext) -> None:
+    """Persist manual text field and return to menu."""
+    data = await state.get_data()
+    field = data.get("input_field")
+    if field not in TEXT_INPUT_FIELDS:
+        await _show_main_menu(message, state)
+        return
+
+    value = (message.text or "").strip()
+    if field == "comment" and value == "-":
+        value = ""
+    await state.update_data({field: value})
+    await _show_main_menu(message, state, "Параметр сохранен. Выберите следующее поле:")
 
 
-@router.callback_query(lambda c: c.data == "flow:skip")
-async def comment_skipped(callback: CallbackQuery, state: FSMContext) -> None:
-    """Skip optional comment."""
-    await state.update_data(comment="")
-    await state.set_state(OrderFlow.client_contact)
-    await _edit_form_message(callback.bot, callback.message.chat.id, state, "Контакт клиента (только для менеджера/владельца):")
-
-
-@router.message(OrderFlow.comment)
-async def comment_entered(message: Message, state: FSMContext) -> None:
-    """Store comment and ask for client contact."""
-    await state.update_data(comment=message.text.strip())
-    await state.set_state(OrderFlow.client_contact)
-    await _edit_form_message(message.bot, message.chat.id, state, "Контакт клиента (только для менеджера/владельца):")
-
-
-@router.message(OrderFlow.client_contact)
-async def client_contact_entered(message: Message, state: FSMContext) -> None:
-    """Store client contact and show confirm summary."""
-    await state.update_data(client_contact=message.text.strip())
-    await state.set_state(OrderFlow.visible_fields)
-    selected = {"date", "time", "address", "type", "equipment", "conditions", "comment"}
-    await state.update_data(visible_fields=selected)
-    await _edit_form_message(
-        message.bot,
-        message.chat.id,
-        state,
-        "Отметьте, какие поля можно показывать мастеру:",
-        build_visibility_keyboard(selected),
-    )
-
-
-@router.callback_query(lambda c: c.data.startswith("vis:toggle:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("vis:toggle:"))
 async def visibility_toggle(callback: CallbackQuery, state: FSMContext) -> None:
     """Toggle visible field for master."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
     key = callback.data.split(":", 2)[2]
     if key not in MASTER_VISIBLE_FIELD_LABELS:
         await callback.answer("Неизвестное поле.", show_alert=True)
         return
 
     data = await state.get_data()
-    selected = set(data.get("visible_fields", set()))
+    selected = set(data.get("visible_fields", set(DEFAULT_VISIBLE_FIELDS)))
     if key in selected:
         selected.remove(key)
     else:
@@ -421,7 +466,7 @@ async def visibility_toggle(callback: CallbackQuery, state: FSMContext) -> None:
         callback.bot,
         callback.message.chat.id,
         state,
-        "Отметьте, какие поля можно показывать мастеру:",
+        "Отметьте поля, видимые мастеру:",
         build_visibility_keyboard(selected),
     )
     await callback.answer()
@@ -429,29 +474,37 @@ async def visibility_toggle(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(lambda c: c.data == "vis:done")
 async def visibility_done(callback: CallbackQuery, state: FSMContext) -> None:
-    """Complete visibility setup and move to confirmation."""
+    """Finish visibility setup and return to main menu."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
     data = await state.get_data()
-    selected = set(data.get("visible_fields", set()))
+    selected = set(data.get("visible_fields", set(DEFAULT_VISIBLE_FIELDS)))
     if not selected:
-        await callback.answer("Выберите хотя бы одно поле для мастера.", show_alert=True)
+        await callback.answer("Выберите хотя бы одно поле.", show_alert=True)
         return
 
-    await state.set_state(OrderFlow.confirm)
-    await _edit_form_message(
-        callback.bot,
-        callback.message.chat.id,
-        state,
-        "Проверьте заявку и нажмите «Подтвердить».",
-        build_confirm_keyboard(),
-    )
-    await callback.answer()
+    await _show_main_menu(callback.message, state, "Видимость сохранена. Выберите следующее поле:")
+    await callback.answer("Сохранено.")
 
 
-@router.callback_query(lambda c: c.data == "flow:confirm")
-async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
-    """Persist order and publish to Telegram group topic."""
+@router.callback_query(lambda c: c.data == "form:submit")
+async def form_submit(callback: CallbackQuery, state: FSMContext, db) -> None:
+    """Validate, persist and publish order."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+
     data = await state.get_data()
-    manager_id = callback.from_user.id
+    missing = _missing_fields(data)
+    if missing:
+        await callback.answer("Не все поля заполнены.", show_alert=True)
+        await _show_main_menu(
+            callback.message,
+            state,
+            "Заполните обязательные поля: " + ", ".join(missing),
+        )
+        return
 
     order_payload = {
         "city": data.get("city", ""),
@@ -463,22 +516,14 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
         "conditions": data.get("conditions", ""),
         "comment": data.get("comment", ""),
         "client_contact": data.get("client_contact", ""),
-        "manager_id": manager_id,
+        "manager_id": callback.from_user.id,
         "status": ORDER_STATUSES["published"],
-        "manager_contact": str(manager_id),
+        "manager_contact": str(callback.from_user.id),
     }
 
     try:
         order = await create_order(db, order_payload)
-        selected_fields = set(data.get("visible_fields", set())) or {
-            "date",
-            "time",
-            "address",
-            "type",
-            "equipment",
-            "conditions",
-            "comment",
-        }
+        selected_fields = set(data.get("visible_fields", set(DEFAULT_VISIBLE_FIELDS)))
         await set_master_visible_fields(db, order.id, selected_fields)
     except Exception as exc:
         logger.exception("Order create failed")
@@ -493,8 +538,7 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
         logger.exception("Telegram publish failed")
         await callback.answer("Заявка сохранена, но не опубликована", show_alert=True)
         await callback.message.edit_text(
-            f"⚠️ Заявка #{order.id} создана, но не опубликована.\n"
-            f"Причина Telegram: {exc.message}"
+            f"⚠️ Заявка #{order.id} создана, но не опубликована.\nПричина Telegram: {exc.message}"
         )
         await state.clear()
         return
@@ -502,8 +546,7 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
         logger.exception("Unexpected publish error")
         await callback.answer("Заявка сохранена, но не опубликована", show_alert=True)
         await callback.message.edit_text(
-            f"⚠️ Заявка #{order.id} создана, но не опубликована.\n"
-            f"Причина: {exc}"
+            f"⚠️ Заявка #{order.id} создана, но не опубликована.\nПричина: {exc}"
         )
         await state.clear()
         return
@@ -512,14 +555,13 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, db) -> None:
         await callback.message.edit_text(f"✅ Заявка #{order.id} опубликована.")
     else:
         await callback.message.edit_text(
-            f"⚠️ Заявка #{order.id} создана, но не опубликована.\n"
-            "Проверьте GROUP_CHAT_ID и CITY_TOPIC_* в .env."
+            f"⚠️ Заявка #{order.id} создана, но не опубликована.\nПроверьте GROUP_CHAT_ID и CITY_TOPIC_* в .env."
         )
-
+    await callback.answer()
     await state.clear()
 
 
-@router.callback_query(lambda c: c.data.startswith("resp:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("resp:"))
 async def master_respond(callback: CallbackQuery, db) -> None:
     """Master responds from group message."""
     user = await ensure_user(db, callback.from_user.id)
@@ -550,17 +592,12 @@ async def master_respond(callback: CallbackQuery, db) -> None:
     await _notify_manager(
         callback.bot,
         order.manager_id,
-        (
-            f"🔔 По заявке #{order.id} есть отклик и автоназначение мастера "
-            f"{format_user_link(callback.from_user.id)}.\n"
-            "Ожидается подтверждение мастера."
-        ),
+        f"🔔 Роль собеседника: мастер. По заявке #{order.id} есть отклик от {format_user_link(callback.from_user.id)}.",
     )
-
     await callback.answer("Отклик принят ✅")
 
 
-@router.callback_query(lambda c: c.data.startswith("accept:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("accept:"))
 async def master_accept(callback: CallbackQuery, db) -> None:
     """Master confirms order."""
     order_id = int(callback.data.split(":", 1)[1])
@@ -572,17 +609,17 @@ async def master_accept(callback: CallbackQuery, db) -> None:
     await set_status(db, order, ORDER_STATUSES["in_progress"])
     await callback.message.edit_text(
         f"🧰 Заявка #{order.id} в работе.\n"
-        "Загрузите фото ДО и ПОСЛЕ.",
+        f"Загрузите фото ДО и ПОСЛЕ: от {MIN_PHOTOS_PER_TYPE} до {MAX_PHOTOS_PER_TYPE} каждого типа.",
         reply_markup=build_photo_actions_keyboard(order.id),
     )
     await _notify_manager(
         callback.bot,
         order.manager_id,
-        f"✅ Мастер {format_user_link(callback.from_user.id)} подтвердил заявку #{order.id} и начал работу.",
+        f"✅ Роль собеседника: мастер. {format_user_link(callback.from_user.id)} подтвердил заявку #{order.id}.",
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("decline:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("decline:"))
 async def master_decline(callback: CallbackQuery, db) -> None:
     """Master declines order."""
     order_id = int(callback.data.split(":", 1)[1])
@@ -596,51 +633,83 @@ async def master_decline(callback: CallbackQuery, db) -> None:
     await _notify_manager(
         callback.bot,
         order.manager_id,
-        f"↩️ Мастер {format_user_link(callback.from_user.id)} отказался от заявки #{order.id}.",
+        f"↩️ Роль собеседника: мастер. {format_user_link(callback.from_user.id)} отказался от заявки #{order.id}.",
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("photo_before:"))
-async def photo_before(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(lambda c: c.data and c.data.startswith("photo_before:"))
+async def photo_before(callback: CallbackQuery, state: FSMContext, db) -> None:
     """Request before photos."""
     order_id = int(callback.data.split(":", 1)[1])
+    current = await get_order_photo_type_count(db, order_id, "before")
     await state.set_state(PhotoFlow.waiting_photo)
     await state.update_data(order_id=order_id, photo_type="before")
-    await callback.message.answer("📸 Отправьте фото ДО (минимум 1).")
+    await callback.message.answer(
+        f"📸 Роль собеседника: мастер.\nФото ДО: {current}/{MAX_PHOTOS_PER_TYPE}. "
+        f"Нужно минимум {MIN_PHOTOS_PER_TYPE}."
+    )
+    await callback.answer()
 
 
-@router.callback_query(lambda c: c.data.startswith("photo_after:"))
-async def photo_after(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(lambda c: c.data and c.data.startswith("photo_after:"))
+async def photo_after(callback: CallbackQuery, state: FSMContext, db) -> None:
     """Request after photos."""
     order_id = int(callback.data.split(":", 1)[1])
+    current = await get_order_photo_type_count(db, order_id, "after")
     await state.set_state(PhotoFlow.waiting_photo)
     await state.update_data(order_id=order_id, photo_type="after")
-    await callback.message.answer("📸 Отправьте фото ПОСЛЕ (минимум 1).")
+    await callback.message.answer(
+        f"📸 Роль собеседника: мастер.\nФото ПОСЛЕ: {current}/{MAX_PHOTOS_PER_TYPE}. "
+        f"Нужно минимум {MIN_PHOTOS_PER_TYPE}."
+    )
+    await callback.answer()
 
 
 @router.message(PhotoFlow.waiting_photo)
 async def receive_photo(message: Message, state: FSMContext, db) -> None:
-    """Store photo file_id in DB."""
+    """Store photo file_id in DB with per-type limits."""
     if not message.photo:
         await message.answer("⚠️ Нужно отправить фото.")
         return
 
     data = await state.get_data()
     order_id = int(data.get("order_id"))
-    photo_type = data.get("photo_type")
-    file_id = message.photo[-1].file_id
+    photo_type = str(data.get("photo_type") or "")
+    if photo_type not in {"before", "after"}:
+        await message.answer("⚠️ Не выбран тип фото (ДО/ПОСЛЕ).")
+        return
+
     order = await get_order(db, order_id)
     if not order or order.master_id != message.from_user.id:
         await message.answer("⛔ Нельзя прикрепить фото к этой заявке.")
         return
 
+    current_count = await get_order_photo_type_count(db, order_id, photo_type)
+    if current_count >= MAX_PHOTOS_PER_TYPE:
+        await message.answer(
+            f"⚠️ Для типа {'ДО' if photo_type == 'before' else 'ПОСЛЕ'} уже загружено {MAX_PHOTOS_PER_TYPE} фото."
+        )
+        return
+
+    file_id = message.photo[-1].file_id
     await add_photo(db, order_id, file_id, photo_type)
-    await message.answer("✅ Фото сохранено. Можно отправить еще фото или завершить заявку.")
+    new_count = current_count + 1
+    need_left = max(0, MIN_PHOTOS_PER_TYPE - new_count)
+    if need_left > 0:
+        await message.answer(
+            f"✅ Фото сохранено ({new_count}/{MAX_PHOTOS_PER_TYPE}) для типа "
+            f"{'ДО' if photo_type == 'before' else 'ПОСЛЕ'}. Еще минимум {need_left}."
+        )
+    else:
+        await message.answer(
+            f"✅ Фото сохранено ({new_count}/{MAX_PHOTOS_PER_TYPE}) для типа "
+            f"{'ДО' if photo_type == 'before' else 'ПОСЛЕ'}. Минимум выполнен."
+        )
 
 
-@router.callback_query(lambda c: c.data.startswith("finish:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("finish:"))
 async def finish_order(callback: CallbackQuery, db) -> None:
-    """Finalize order after photos."""
+    """Finalize order only with 3-5 before and after photos."""
     order_id = int(callback.data.split(":", 1)[1])
     order = await get_order(db, order_id)
     if not order or order.master_id != callback.from_user.id:
@@ -648,20 +717,25 @@ async def finish_order(callback: CallbackQuery, db) -> None:
         return
 
     photo_counts = await get_order_photo_counts(db, order.id)
-    if photo_counts["before"] < 1 or photo_counts["after"] < 1:
+    before_count = photo_counts["before"]
+    after_count = photo_counts["after"]
+    if before_count < MIN_PHOTOS_PER_TYPE or after_count < MIN_PHOTOS_PER_TYPE:
         await callback.answer(
-            "Нужны фото ДО и ПОСЛЕ (минимум по одному).",
+            f"Нужно минимум {MIN_PHOTOS_PER_TYPE} фото ДО и {MIN_PHOTOS_PER_TYPE} ПОСЛЕ.",
             show_alert=True,
         )
         return
 
     await set_status(db, order, ORDER_STATUSES["completed"])
-    await callback.message.edit_text(f"✅ Заявка #{order.id} завершена.")
+    await callback.message.edit_text(
+        f"✅ Заявка #{order.id} завершена.\nФото ДО: {before_count}, ПОСЛЕ: {after_count}."
+    )
     await _notify_manager(
         callback.bot,
         order.manager_id,
         (
-            f"🏁 Заявка #{order.id} завершена мастером {format_user_link(callback.from_user.id)}.\n"
-            f"Фото: ДО={photo_counts['before']}, ПОСЛЕ={photo_counts['after']}."
+            f"🏁 Роль собеседника: мастер. Заявка #{order.id} завершена "
+            f"{format_user_link(callback.from_user.id)}.\nФото: ДО={before_count}, ПОСЛЕ={after_count}."
         ),
     )
+    await callback.answer()

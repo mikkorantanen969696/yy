@@ -164,3 +164,14 @@ async def get_order_photo_counts(session: AsyncSession, order_id: int) -> dict[s
             out["before"] += 1
     return out
 
+
+async def get_order_photo_type_count(session: AsyncSession, order_id: int, photo_type: str) -> int:
+    """Return count of photos for one order/type."""
+    result = await session.execute(
+        select(OrderPhoto.id).where(
+            OrderPhoto.order_id == order_id,
+            OrderPhoto.type == photo_type,
+        )
+    )
+    return len(result.scalars().all())
+

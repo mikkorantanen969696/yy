@@ -75,7 +75,8 @@ def _city_label(city_key: str) -> str:
 def _usage() -> str:
     """Admin command list."""
     return (
-        "🛠️ Админ-панель:\n"
+        "🛠️ Роль: администратор\n"
+        "Админ-панель:\n"
         "/stats - общая аналитика\n"
         "/city_stats - статистика по городам\n"
         "/orders [status|all] [limit] - последние заявки\n"

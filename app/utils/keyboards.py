@@ -26,6 +26,18 @@ MASTER_VISIBLE_FIELD_LABELS = {
     "client_contact": "Контакт клиента",
 }
 
+ORDER_MENU_FIELDS = [
+    ("city", "🏙️ Город"),
+    ("date", "📅 Дата"),
+    ("time", "⏰ Время"),
+    ("address", "📍 Адрес"),
+    ("cleaning_type", "🧹 Тип уборки"),
+    ("equipment", "🧰 Оборудование"),
+    ("conditions", "💸 Условия"),
+    ("comment", "💬 Комментарий"),
+    ("client_contact", "📞 Контакт клиента"),
+]
+
 
 def build_city_keyboard() -> InlineKeyboardMarkup:
     """Choose city topic for order publishing."""
@@ -143,6 +155,76 @@ def build_visibility_keyboard(selected: set[str]) -> InlineKeyboardMarkup:
     builder.add(InlineKeyboardButton(text="Назад", callback_data="flow:back"))
     builder.add(InlineKeyboardButton(text="Отмена", callback_data="flow:cancel"))
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_order_menu_keyboard(data: dict) -> InlineKeyboardMarkup:
+    """Main one-message order constructor keyboard."""
+    builder = InlineKeyboardBuilder()
+    for key, label in ORDER_MENU_FIELDS:
+        value = data.get(key, "")
+        marker = "✅" if value else "⬜"
+        builder.add(InlineKeyboardButton(text=f"{marker} {label}", callback_data=f"form:edit:{key}"))
+    builder.add(InlineKeyboardButton(text="👁️ Видимость для мастера", callback_data="form:edit:visible"))
+    builder.add(InlineKeyboardButton(text="✅ Опубликовать заявку", callback_data="form:submit"))
+    builder.add(InlineKeyboardButton(text="Отмена", callback_data="flow:cancel"))
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_form_city_keyboard() -> InlineKeyboardMarkup:
+    """City selection inside constructor menu."""
+    builder = InlineKeyboardBuilder()
+    for key, label in CITY_CHOICES.items():
+        builder.add(InlineKeyboardButton(text=label, callback_data=f"formcity:{key}"))
+    builder.add(InlineKeyboardButton(text="Назад в меню", callback_data="form:menu"))
+    builder.add(InlineKeyboardButton(text="Отмена", callback_data="flow:cancel"))
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def build_form_date_keyboard() -> InlineKeyboardMarkup:
+    """Date selection inside constructor menu."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="Сегодня", callback_data="formdate:today"))
+    builder.add(InlineKeyboardButton(text="Завтра", callback_data="formdate:tomorrow"))
+    builder.add(InlineKeyboardButton(text="Ввести вручную", callback_data="formdate:manual"))
+    builder.add(InlineKeyboardButton(text="Назад в меню", callback_data="form:menu"))
+    builder.add(InlineKeyboardButton(text="Отмена", callback_data="flow:cancel"))
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def build_form_cleaning_type_keyboard() -> InlineKeyboardMarkup:
+    """Cleaning type selection inside constructor menu."""
+    builder = InlineKeyboardBuilder()
+    for key, label in CLEANING_TYPES.items():
+        builder.add(InlineKeyboardButton(text=label, callback_data=f"formtype:{key}"))
+    builder.add(InlineKeyboardButton(text="Назад в меню", callback_data="form:menu"))
+    builder.add(InlineKeyboardButton(text="Отмена", callback_data="flow:cancel"))
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def build_form_equipment_keyboard() -> InlineKeyboardMarkup:
+    """Equipment selection inside constructor menu."""
+    builder = InlineKeyboardBuilder()
+    for key, label in EQUIPMENT_OPTIONS.items():
+        builder.add(InlineKeyboardButton(text=label, callback_data=f"formequip:{key}"))
+    builder.add(InlineKeyboardButton(text="Назад в меню", callback_data="form:menu"))
+    builder.add(InlineKeyboardButton(text="Отмена", callback_data="flow:cancel"))
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_form_conditions_keyboard() -> InlineKeyboardMarkup:
+    """Conditions selection inside constructor menu."""
+    builder = InlineKeyboardBuilder()
+    for key, label in CONDITION_OPTIONS.items():
+        builder.add(InlineKeyboardButton(text=label, callback_data=f"formcond:{key}"))
+    builder.add(InlineKeyboardButton(text="Назад в меню", callback_data="form:menu"))
+    builder.add(InlineKeyboardButton(text="Отмена", callback_data="flow:cancel"))
+    builder.adjust(2)
     return builder.as_markup()
 
 
