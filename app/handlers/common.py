@@ -13,7 +13,7 @@ from app.config.settings import settings
 from app.services.invites import consume_role_invite
 from app.services.users import ensure_user, is_admin, set_role
 from app.utils.constants import ROLES
-from app.utils.keyboards import build_role_entry_keyboard
+from app.utils.keyboards import build_start_keyboard
 
 router = Router()
 
@@ -26,7 +26,7 @@ HELP_TEXT = (
     "🚀 С чего начать\n"
     "1) Нажмите /start\n"
     "2) Убедитесь, что вам назначена роль (admin / manager / master)\n"
-    "3) Откройте нужную панель:\n"
+    "3) Откройте нужную панель (кнопками на /start или командами):\n"
     "- /admin для администратора\n"
     "- /manager для менеджера\n"
     "- /profile для мастера\n\n"
@@ -68,7 +68,8 @@ HELP_TEXT = (
     "- /export_basic, /export_full экспорт CSV\n\n"
     "Полезно владельцу:\n"
     "- /owner_guide подробное руководство без технических терминов\n\n"
-    "❗ Если видите «Нет доступа», значит роль не назначена или аккаунт не в списке админов."
+    "❗ Если видите «Нет доступа», значит роль не назначена или аккаунт не в списке админов.\n"
+    "💡 Совет: используйте кнопки в панелях, чтобы не вводить команды вручную."
 )
 
 OWNER_GUIDE_TEXT = (
@@ -156,7 +157,8 @@ async def cmd_start(message: Message, db) -> None:
         await message.answer(
             "👋 Доступ администратора подтвержден.\n"
             "Ваша роль: admin.\n"
-            "Откройте /admin для панели управления или /help для полной инструкции."
+            "Ниже быстрые кнопки для запуска работы.",
+            reply_markup=build_start_keyboard(is_admin_user=True),
         )
         return
 
@@ -165,12 +167,52 @@ async def cmd_start(message: Message, db) -> None:
     await message.answer(
         "👋 Добро пожаловать!\n"
         f"Ваша роль: {role}.\n"
-        "Откройте /manager или /profile в зависимости от вашей роли.\n"
+        "Используйте кнопки ниже для быстрого входа в нужный раздел.\n"
         "Если роль еще не назначена, обратитесь к администратору.\n"
         "Для подробной инструкции используйте /help.\n"
         "Если у вас есть секретное слово, нажмите «Войти в роль».",
-        reply_markup=build_role_entry_keyboard(),
+        reply_markup=build_start_keyboard(is_admin_user=False),
     )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("nav:"))
+async def nav_callback(callback: CallbackQuery, state: FSMContext, db) -> None:
+    """Start-screen navigation shortcuts."""
+    if not callback.message:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+
+    action = callback.data.split(":", 1)[1]
+    if action == "help":
+        await callback.message.answer(HELP_TEXT)
+        await callback.answer()
+        return
+    if action == "admin":
+        from app.handlers.admin import cmd_admin
+
+        await cmd_admin(callback.message, db)
+        await callback.answer()
+        return
+    if action == "manager":
+        from app.handlers.manager import cmd_manager
+
+        await cmd_manager(callback.message, db)
+        await callback.answer()
+        return
+    if action == "profile":
+        from app.handlers.master import cmd_profile
+
+        await cmd_profile(callback.message, db)
+        await callback.answer()
+        return
+    if action == "new_order":
+        from app.handlers.order_flow import start_order_flow
+
+        await start_order_flow(callback.message, state, db)
+        await callback.answer()
+        return
+
+    await callback.answer("Неизвестное действие.")
 
 
 @router.message(Command("help"))

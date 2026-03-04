@@ -205,7 +205,7 @@ async def _edit_form_message(bot, chat_id: int, state: FSMContext, prompt: str, 
 async def _ensure_manager(message: Message, db) -> bool:
     """Managers and admins can create orders."""
     user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
-    return has_role(user, ROLES["manager"]) or is_admin(
+    return has_role(user, ROLES["manager"]) or has_role(user, ROLES["admin"]) or is_admin(
         message.from_user.id,
         settings.get_admin_ids(),
         username=message.from_user.username or "",

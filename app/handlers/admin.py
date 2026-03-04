@@ -89,20 +89,21 @@ def _usage() -> str:
     """Admin command list."""
     return (
         "🛠️ Роль: администратор\n"
-        "Админ-панель:\n"
-        "/stats - общая аналитика\n"
-        "/city_stats - статистика по городам\n"
-        "/orders [status|all] [limit] - последние заявки\n"
-        "/order [id] - детальная заявка\n"
-        "/set_status [order_id] [status] - сменить статус\n"
-        "/reassign [order_id] [@username|none] - назначить/снять мастера\n"
-        "/users [role|all] [active|inactive|all] [limit] - пользователи\n"
-        "/set_role [@username] [admin|manager|master] - назначить роль\n"
-        "/set_active [@username] [on|off] - активировать/деактивировать\n"
-        "/broadcast [role|all] [текст] - рассылка пользователям\n"
-        "/export_basic - экспорт CSV (основной)\n"
-        "/export_full - экспорт CSV (полный)\n\n"
-        "Кнопка «Хочу добавить роль» - выдать секретное слово для @username\n\n"
+        "Используйте кнопки ниже для основных действий.\n\n"
+        "Команды (если нужно вручную):\n"
+        "/stats - 📊 общая аналитика\n"
+        "/city_stats - 🏙️ статистика по городам\n"
+        "/orders [status|all] [limit] - 📋 последние заявки\n"
+        "/order [id] - 🔎 детальная заявка\n"
+        "/set_status [order_id] [status] - ♻️ сменить статус\n"
+        "/reassign [order_id] [@username|none] - 👷 назначить/снять мастера\n"
+        "/users [role|all] [active|inactive|all] [limit] - 👥 пользователи\n"
+        "/set_role [@username] [admin|manager|master] - 🎯 назначить роль\n"
+        "/set_active [@username] [on|off] - 🔐 активировать/деактивировать\n"
+        "/broadcast [role|all] [текст] - 📣 рассылка пользователям\n"
+        "/export_basic - 📄 экспорт CSV (основной)\n"
+        "/export_full - 🧾 экспорт CSV (полный)\n\n"
+        "💡 Кнопка «Хочу добавить роль» выдает секретное слово для @username.\n\n"
         "ℹ️ Подробная инструкция: /help"
     )
 
@@ -182,7 +183,7 @@ async def cmd_admin(message: Message, db) -> None:
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("admin:") and not c.data.startswith("admin:add_role:"))
-async def admin_panel_callback(callback: CallbackQuery, db) -> None:
+async def admin_panel_callback(callback: CallbackQuery, state: FSMContext, db) -> None:
     """Handle admin panel button presses."""
     if not callback.message:
         await callback.answer("Сообщение недоступно.", show_alert=True)
@@ -204,6 +205,13 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
             "Выберите роль, которую хотите выдать новому пользователю:",
             reply_markup=build_role_choice_keyboard(),
         )
+        await callback.answer()
+        return
+
+    if action == "new_order":
+        from app.handlers.order_flow import start_order_flow
+
+        await start_order_flow(callback.message, state, db)
         await callback.answer()
         return
 

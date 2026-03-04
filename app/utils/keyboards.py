@@ -231,6 +231,7 @@ def build_form_conditions_keyboard() -> InlineKeyboardMarkup:
 def build_admin_panel_keyboard() -> InlineKeyboardMarkup:
     """Main admin panel quick actions."""
     builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="📝 Новая заявка", callback_data="admin:new_order"))
     builder.add(InlineKeyboardButton(text="Общая статистика", callback_data="admin:stats"))
     builder.add(InlineKeyboardButton(text="Статистика по городам", callback_data="admin:city_stats"))
     builder.add(InlineKeyboardButton(text="Последние заявки", callback_data="admin:orders"))
@@ -286,4 +287,40 @@ def build_admin_users_filter_keyboard() -> InlineKeyboardMarkup:
     builder.add(InlineKeyboardButton(text="Мастера", callback_data="admin:users_filter:master:all"))
     builder.add(InlineKeyboardButton(text="Назад в админку", callback_data="admin:refresh"))
     builder.adjust(3)
+    return builder.as_markup()
+
+
+def build_manager_panel_keyboard() -> InlineKeyboardMarkup:
+    """Manager quick actions."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="📝 Новая заявка", callback_data="manager:new_order"))
+    builder.add(InlineKeyboardButton(text="📋 Мои заявки", callback_data="manager:my_orders"))
+    builder.add(InlineKeyboardButton(text="📊 Моя статистика", callback_data="manager:my_stats"))
+    builder.add(InlineKeyboardButton(text="📄 Мой экспорт CSV", callback_data="manager:export_basic"))
+    builder.add(InlineKeyboardButton(text="🔄 Обновить", callback_data="manager:refresh"))
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_master_panel_keyboard() -> InlineKeyboardMarkup:
+    """Master quick actions."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="🧰 Мои заказы", callback_data="master:my_jobs"))
+    builder.add(InlineKeyboardButton(text="📊 Моя статистика", callback_data="master:my_stats"))
+    builder.add(InlineKeyboardButton(text="🔄 Обновить", callback_data="master:refresh"))
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_start_keyboard(is_admin_user: bool) -> InlineKeyboardMarkup:
+    """Start screen shortcuts."""
+    builder = InlineKeyboardBuilder()
+    if is_admin_user:
+        builder.add(InlineKeyboardButton(text="🛠️ Админ-панель", callback_data="nav:admin"))
+        builder.add(InlineKeyboardButton(text="📝 Новая заявка", callback_data="nav:new_order"))
+    builder.add(InlineKeyboardButton(text="👨‍💼 Панель менеджера", callback_data="nav:manager"))
+    builder.add(InlineKeyboardButton(text="👷 Профиль мастера", callback_data="nav:profile"))
+    builder.add(InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help"))
+    builder.add(InlineKeyboardButton(text="🔐 Войти в роль", callback_data="role_login:start"))
+    builder.adjust(1)
     return builder.as_markup()
