@@ -28,7 +28,13 @@ from app.services.orders import (
     unassign_master,
 )
 from app.services.telegram import send_to_city_topic
-from app.services.users import ensure_user, has_role, is_admin
+from app.services.users import (
+    ensure_user,
+    get_username_by_telegram_id,
+    has_role,
+    is_admin,
+    username_with_at,
+)
 from app.utils.constants import (
     CITY_CHOICES,
     CLEANING_TYPES,
@@ -49,7 +55,7 @@ from app.utils.keyboards import (
     build_photo_actions_keyboard,
     build_visibility_keyboard,
 )
-from app.utils.text import format_manager_contact, format_order_brief, format_user_link
+from app.utils.text import format_manager_contact, format_order_brief
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -199,7 +205,12 @@ async def _edit_form_message(bot, chat_id: int, state: FSMContext, prompt: str, 
 async def _ensure_manager(message: Message, db) -> bool:
     """Managers and admins can create orders."""
     user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
-    return has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())
+    return has_role(user, ROLES["manager"]) or is_admin(
+        message.from_user.id,
+        settings.get_admin_ids(),
+        username=message.from_user.username or "",
+        admin_usernames=settings.get_admin_usernames(),
+    )
 
 
 async def _notify_manager(bot, manager_id: int | None, text: str) -> None:
@@ -234,7 +245,14 @@ async def start_order_flow(message: Message, state: FSMContext, db) -> None:
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
 
-    creator_role_label = _role_label(is_admin(message.from_user.id, settings.get_admin_ids()))
+    creator_role_label = _role_label(
+        is_admin(
+            message.from_user.id,
+            settings.get_admin_ids(),
+            username=message.from_user.username or "",
+            admin_usernames=settings.get_admin_usernames(),
+        )
+    )
     await state.clear()
     await state.set_state(OrderFlow.menu)
     form_message = await message.answer(
@@ -518,7 +536,7 @@ async def form_submit(callback: CallbackQuery, state: FSMContext, db) -> None:
         "client_contact": data.get("client_contact", ""),
         "manager_id": callback.from_user.id,
         "status": ORDER_STATUSES["published"],
-        "manager_contact": str(callback.from_user.id),
+        "manager_contact": username_with_at(callback.from_user.username),
     }
 
     try:
@@ -583,7 +601,9 @@ async def master_respond(callback: CallbackQuery, db) -> None:
     visible_fields = await get_master_visible_fields(db, order.id)
     full_text = _build_master_text(order, visible_fields)
 
-    contact = format_manager_contact(order.manager_id)
+    manager_username = await get_username_by_telegram_id(db, order.manager_id)
+    contact = format_manager_contact(order.manager_id, manager_username)
+    actor_username = username_with_at(callback.from_user.username)
     await callback.bot.send_message(
         chat_id=callback.from_user.id,
         text=f"✅ Вы откликнулись на заявку.\n\n{full_text}\n{contact}",
@@ -592,7 +612,7 @@ async def master_respond(callback: CallbackQuery, db) -> None:
     await _notify_manager(
         callback.bot,
         order.manager_id,
-        f"🔔 Роль собеседника: мастер. По заявке #{order.id} есть отклик от {format_user_link(callback.from_user.id)}.",
+        f"🔔 Роль собеседника: мастер. По заявке #{order.id} есть отклик от {actor_username}.",
     )
     await callback.answer("Отклик принят ✅")
 
@@ -615,7 +635,7 @@ async def master_accept(callback: CallbackQuery, db) -> None:
     await _notify_manager(
         callback.bot,
         order.manager_id,
-        f"✅ Роль собеседника: мастер. {format_user_link(callback.from_user.id)} подтвердил заявку #{order.id}.",
+        f"✅ Роль собеседника: мастер. {username_with_at(callback.from_user.username)} подтвердил заявку #{order.id}.",
     )
 
 
@@ -633,7 +653,7 @@ async def master_decline(callback: CallbackQuery, db) -> None:
     await _notify_manager(
         callback.bot,
         order.manager_id,
-        f"↩️ Роль собеседника: мастер. {format_user_link(callback.from_user.id)} отказался от заявки #{order.id}.",
+        f"↩️ Роль собеседника: мастер. {username_with_at(callback.from_user.username)} отказался от заявки #{order.id}.",
     )
 
 
@@ -735,7 +755,7 @@ async def finish_order(callback: CallbackQuery, db) -> None:
         order.manager_id,
         (
             f"🏁 Роль собеседника: мастер. Заявка #{order.id} завершена "
-            f"{format_user_link(callback.from_user.id)}.\nФото: ДО={before_count}, ПОСЛЕ={after_count}."
+            f"{username_with_at(callback.from_user.username)}.\nФото: ДО={before_count}, ПОСЛЕ={after_count}."
         ),
     )
     await callback.answer()

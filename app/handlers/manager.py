@@ -11,7 +11,7 @@ from aiogram.types.input_file import BufferedInputFile
 from app.config.settings import settings
 from app.services.exports import export_basic_for_manager
 from app.services.orders import list_orders_by_manager
-from app.services.users import ensure_user, has_role, is_admin
+from app.services.users import ensure_user, has_role, is_admin, username_with_at
 from app.utils.constants import ROLES
 
 router = Router()
@@ -34,7 +34,15 @@ def _format_orders(orders) -> str:
 async def cmd_manager(message: Message, db) -> None:
     """Manager panel."""
     user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
-    if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
+    if not (
+        has_role(user, ROLES["manager"])
+        or is_admin(
+            message.from_user.id,
+            settings.get_admin_ids(),
+            username=message.from_user.username or "",
+            admin_usernames=settings.get_admin_usernames(),
+        )
+    ):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
     await message.answer(
@@ -53,7 +61,15 @@ async def cmd_manager(message: Message, db) -> None:
 async def cmd_my_orders(message: Message, db) -> None:
     """List manager orders."""
     user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
-    if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
+    if not (
+        has_role(user, ROLES["manager"])
+        or is_admin(
+            message.from_user.id,
+            settings.get_admin_ids(),
+            username=message.from_user.username or "",
+            admin_usernames=settings.get_admin_usernames(),
+        )
+    ):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
 
@@ -65,7 +81,15 @@ async def cmd_my_orders(message: Message, db) -> None:
 async def cmd_my_stats(message: Message, db) -> None:
     """Basic manager stats."""
     user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
-    if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
+    if not (
+        has_role(user, ROLES["manager"])
+        or is_admin(
+            message.from_user.id,
+            settings.get_admin_ids(),
+            username=message.from_user.username or "",
+            admin_usernames=settings.get_admin_usernames(),
+        )
+    ):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
 
@@ -75,6 +99,7 @@ async def cmd_my_stats(message: Message, db) -> None:
     await message.answer(
         f"👨‍💼 Роль собеседника: менеджер\n"
         f"📊 Моя статистика:\n"
+        f"Username: {username_with_at(user.username)}\n"
         f"Всего заявок: {total}\n"
         f"Завершено: {completed}"
     )
@@ -84,12 +109,21 @@ async def cmd_my_stats(message: Message, db) -> None:
 async def cmd_my_export_basic(message: Message, db) -> None:
     """Send manager-scoped basic CSV export."""
     user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
-    if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
+    if not (
+        has_role(user, ROLES["manager"])
+        or is_admin(
+            message.from_user.id,
+            settings.get_admin_ids(),
+            username=message.from_user.username or "",
+            admin_usernames=settings.get_admin_usernames(),
+        )
+    ):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
 
     data = await export_basic_for_manager(db, user.telegram_id)
-    file = BufferedInputFile(data, filename=f"orders_basic_manager_{user.telegram_id}.csv")
+    username = (user.username or "manager").strip() or "manager"
+    file = BufferedInputFile(data, filename=f"orders_basic_manager_{username}.csv")
     await message.answer_document(file)
 
 
@@ -97,7 +131,15 @@ async def cmd_my_export_basic(message: Message, db) -> None:
 async def cmd_my_export_full(message: Message, db) -> None:
     """Managers are restricted to basic export only."""
     user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
-    if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
+    if not (
+        has_role(user, ROLES["manager"])
+        or is_admin(
+            message.from_user.id,
+            settings.get_admin_ids(),
+            username=message.from_user.username or "",
+            admin_usernames=settings.get_admin_usernames(),
+        )
+    ):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
     await message.answer("⛔ Менеджеру доступна только основная выгрузка: /my_export_basic")

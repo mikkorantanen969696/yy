@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.order import Order
 from app.models.order_photo import OrderPhoto
+from app.models.user import User
+from app.services.users import username_with_at
 
 
 async def _load_photos(session: AsyncSession) -> dict[int, dict[str, list[str]]]:
@@ -30,6 +32,12 @@ async def _load_photos(session: AsyncSession) -> dict[int, dict[str, list[str]]]
     return grouped
 
 
+async def _load_usernames(session: AsyncSession) -> dict[int, str]:
+    """Load usernames by telegram id."""
+    result = await session.execute(select(User.telegram_id, User.username))
+    return {int(tid): username_with_at(username) for tid, username in result.all()}
+
+
 def _to_csv(rows: Iterable[list[str]], header: list[str]) -> bytes:
     """Build CSV bytes in UTF-8."""
     buf = io.StringIO()
@@ -45,14 +53,16 @@ async def export_basic(session: AsyncSession) -> bytes:
     result = await session.execute(select(Order))
     orders = result.scalars().all()
 
+    usernames = await _load_usernames(session)
+
     header = [
         "id",
         "city",
         "date",
         "time",
         "status",
-        "manager_id",
-        "master_id",
+        "manager_username",
+        "master_username",
     ]
 
     rows = []
@@ -64,8 +74,8 @@ async def export_basic(session: AsyncSession) -> bytes:
                 order.date,
                 order.time,
                 order.status,
-                str(order.manager_id or ""),
-                str(order.master_id or ""),
+                usernames.get(int(order.manager_id), "-") if order.manager_id else "-",
+                usernames.get(int(order.master_id), "-") if order.master_id else "-",
             ]
         )
 
@@ -77,14 +87,16 @@ async def export_basic_for_manager(session: AsyncSession, manager_id: int) -> by
     result = await session.execute(select(Order).where(Order.manager_id == manager_id))
     orders = result.scalars().all()
 
+    usernames = await _load_usernames(session)
+
     header = [
         "id",
         "city",
         "date",
         "time",
         "status",
-        "manager_id",
-        "master_id",
+        "manager_username",
+        "master_username",
     ]
 
     rows = []
@@ -96,8 +108,8 @@ async def export_basic_for_manager(session: AsyncSession, manager_id: int) -> by
                 order.date,
                 order.time,
                 order.status,
-                str(order.manager_id or ""),
-                str(order.master_id or ""),
+                usernames.get(int(order.manager_id), "-") if order.manager_id else "-",
+                usernames.get(int(order.master_id), "-") if order.master_id else "-",
             ]
         )
 
@@ -109,6 +121,7 @@ async def export_full(session: AsyncSession) -> bytes:
     result = await session.execute(select(Order))
     orders = result.scalars().all()
     photos = await _load_photos(session)
+    usernames = await _load_usernames(session)
 
     header = [
         "id",
@@ -122,8 +135,8 @@ async def export_full(session: AsyncSession) -> bytes:
         "comment",
         "client_contact",
         "manager_contact",
-        "manager_id",
-        "master_id",
+        "manager_username",
+        "master_username",
         "status",
         "created_at",
         "photos_before",
@@ -146,8 +159,8 @@ async def export_full(session: AsyncSession) -> bytes:
                 order.comment,
                 order.client_contact,
                 order.manager_contact,
-                str(order.manager_id or ""),
-                str(order.master_id or ""),
+                usernames.get(int(order.manager_id), "-") if order.manager_id else "-",
+                usernames.get(int(order.master_id), "-") if order.master_id else "-",
                 order.status,
                 order.created_at.isoformat() if order.created_at else "",
                 ",".join(order_photos["before"]),
@@ -163,6 +176,7 @@ async def export_full_for_manager(session: AsyncSession, manager_id: int) -> byt
     result = await session.execute(select(Order).where(Order.manager_id == manager_id))
     orders = result.scalars().all()
     photos = await _load_photos(session)
+    usernames = await _load_usernames(session)
 
     header = [
         "id",
@@ -176,8 +190,8 @@ async def export_full_for_manager(session: AsyncSession, manager_id: int) -> byt
         "comment",
         "client_contact",
         "manager_contact",
-        "manager_id",
-        "master_id",
+        "manager_username",
+        "master_username",
         "status",
         "created_at",
         "photos_before",
@@ -200,8 +214,8 @@ async def export_full_for_manager(session: AsyncSession, manager_id: int) -> byt
                 order.comment,
                 order.client_contact,
                 order.manager_contact,
-                str(order.manager_id or ""),
-                str(order.master_id or ""),
+                usernames.get(int(order.manager_id), "-") if order.manager_id else "-",
+                usernames.get(int(order.master_id), "-") if order.master_id else "-",
                 order.status,
                 order.created_at.isoformat() if order.created_at else "",
                 ",".join(order_photos["before"]),

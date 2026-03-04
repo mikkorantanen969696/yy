@@ -19,6 +19,12 @@ def normalize_username(raw: str) -> str:
     return value.lower()
 
 
+def username_with_at(username: str | None) -> str:
+    """Format normalized username for UI."""
+    value = normalize_username(username or "")
+    return f"@{value}" if value else "-"
+
+
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> User | None:
     """Fetch a user by Telegram ID."""
     stmt = select(User).where(
@@ -35,6 +41,52 @@ async def get_user_by_username(session: AsyncSession, username: str) -> User | N
         return None
     result = await session.execute(select(User).where(User.username == normalized))
     return result.scalar_one_or_none()
+
+
+async def get_username_by_telegram_id(session: AsyncSession, telegram_id: int | None) -> str:
+    """Return @username for telegram id or fallback to '-'."""
+    if not telegram_id:
+        return "-"
+    user = await get_user_by_telegram_id(session, telegram_id)
+    return username_with_at(user.username if user else "")
+
+
+async def get_usernames_map_by_telegram_ids(
+    session: AsyncSession,
+    telegram_ids: list[int],
+) -> dict[int, str]:
+    """Bulk load usernames by Telegram IDs."""
+    ids = sorted({int(i) for i in telegram_ids if i})
+    if not ids:
+        return {}
+    result = await session.execute(select(User.telegram_id, User.username).where(User.telegram_id.in_(ids)))
+    return {int(tid): username_with_at(uname) for tid, uname in result.all()}
+
+
+async def resolve_user_selector(
+    session: AsyncSession,
+    selector: str,
+) -> tuple[int | None, str]:
+    """
+    Resolve selector (telegram id or @username) to telegram id.
+
+    Returns: (telegram_id_or_none, normalized_username_or_empty).
+    """
+    raw = (selector or "").strip()
+    if not raw:
+        return None, ""
+    if raw.startswith("@"):
+        normalized = normalize_username(raw)
+        if not normalized:
+            return None, ""
+        user = await get_user_by_username(session, normalized)
+        if not user:
+            return None, normalized
+        return int(user.telegram_id), normalized
+    try:
+        return int(raw), ""
+    except ValueError:
+        return None, ""
 
 
 async def ensure_user(
@@ -137,8 +189,17 @@ async def count_users_by_role(session: AsyncSession) -> dict[str, int]:
     return {(role or ""): int(count) for role, count in result.all()}
 
 
-def is_admin(telegram_id: int, admin_ids: list[int]) -> bool:
-    """Check if user is in admin list."""
+def is_admin(
+    telegram_id: int,
+    admin_ids: list[int],
+    username: str = "",
+    admin_usernames: list[str] | None = None,
+) -> bool:
+    """Check admin by username (preferred) or by legacy id whitelist."""
+    normalized_username = normalize_username(username)
+    allowed_usernames = {normalize_username(item) for item in (admin_usernames or []) if item}
+    if normalized_username and normalized_username in allowed_usernames:
+        return True
     return telegram_id in admin_ids
 
 

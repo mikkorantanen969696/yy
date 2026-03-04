@@ -33,12 +33,15 @@ from app.services.users import (
     count_users,
     count_users_by_role,
     ensure_user,
-    get_user_by_username,
+    get_usernames_map_by_telegram_ids,
+    get_username_by_telegram_id,
     has_role,
     is_admin,
     list_users,
+    resolve_user_selector,
     set_role,
     set_user_active,
+    username_with_at,
 )
 from app.utils.constants import CITY_CHOICES, ORDER_STATUSES, ROLES
 from app.utils.keyboards import (
@@ -47,7 +50,6 @@ from app.utils.keyboards import (
     build_role_choice_keyboard,
     build_admin_users_filter_keyboard,
 )
-from app.utils.text import format_user_link
 
 router = Router()
 
@@ -93,10 +95,10 @@ def _usage() -> str:
         "/orders [status|all] [limit] - последние заявки\n"
         "/order [id] - детальная заявка\n"
         "/set_status [order_id] [status] - сменить статус\n"
-        "/reassign [order_id] [master_tg_id|@username|none] - назначить/снять мастера\n"
+        "/reassign [order_id] [@username|none] - назначить/снять мастера\n"
         "/users [role|all] [active|inactive|all] [limit] - пользователи\n"
-        "/set_role [telegram_id|@username] [admin|manager|master] - назначить роль\n"
-        "/set_active [telegram_id] [on|off] - активировать/деактивировать\n"
+        "/set_role [@username] [admin|manager|master] - назначить роль\n"
+        "/set_active [@username] [on|off] - активировать/деактивировать\n"
         "/broadcast [role|all] [текст] - рассылка пользователям\n"
         "/export_basic - экспорт CSV (основной)\n"
         "/export_full - экспорт CSV (полный)\n\n"
@@ -114,18 +116,26 @@ def _parse_limit(raw: str, default: int = 20, minimum: int = 1, maximum: int = 2
     return max(minimum, min(maximum, value))
 
 
-def _format_orders_list(orders: list, title: str) -> str:
+async def _format_orders_list(db, orders: list, title: str) -> str:
     """Format compact order list for admin output."""
     if not orders:
         return "Заявки не найдены."
 
+    ids: list[int] = []
+    for order in orders:
+        if order.manager_id:
+            ids.append(int(order.manager_id))
+        if order.master_id:
+            ids.append(int(order.master_id))
+    usernames = await get_usernames_map_by_telegram_ids(db, ids)
+
     lines = [title]
     for order in orders:
-        manager_link = format_user_link(order.manager_id)
-        master_link = format_user_link(order.master_id)
+        manager_username = usernames.get(int(order.manager_id), "-") if order.manager_id else "-"
+        master_username = usernames.get(int(order.master_id), "-") if order.master_id else "-"
         lines.append(
             f"#{order.id} | {_city_label(order.city)} | {order.date} {order.time} | {order.status} | "
-            f"mgr:{manager_link} | mst:{master_link}"
+            f"mgr:{manager_username} | mst:{master_username}"
         )
     return "\n".join(lines)
 
@@ -141,26 +151,31 @@ def _format_users_list(users: list, total_users: int, by_role: dict[str, int], t
         "По ролям: " + ", ".join(f"{k or 'без роли'}={v}" for k, v in by_role.items()),
     ]
     for user in users:
-        user_link = format_user_link(user.telegram_id)
+        user_name = username_with_at(user.username)
         lines.append(
-            f"- tg:{user_link} | role:{user.role or '-'} | "
+            f"- user:{user_name} | role:{user.role or '-'} | "
             f"active:{'yes' if user.is_active else 'no'} | city:{user.city or '-'}"
         )
     return "\n".join(lines)
 
 
-async def _can_use_admin(telegram_id: int, db) -> bool:
+async def _can_use_admin(telegram_id: int, db, username: str = "") -> bool:
     """Allow admin access by env whitelist or DB role."""
-    if is_admin(telegram_id, settings.get_admin_ids()):
+    if is_admin(
+        telegram_id,
+        settings.get_admin_ids(),
+        username=username,
+        admin_usernames=settings.get_admin_usernames(),
+    ):
         return True
-    user = await ensure_user(db, telegram_id)
+    user = await ensure_user(db, telegram_id, username=username)
     return has_role(user, ROLES["admin"])
 
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, db) -> None:
     """Admin panel help."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
     await message.answer(_usage(), reply_markup=build_admin_panel_keyboard())
@@ -173,7 +188,7 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
         await callback.answer("Сообщение недоступно.", show_alert=True)
         return
 
-    if not await _can_use_admin(callback.from_user.id, db):
+    if not await _can_use_admin(callback.from_user.id, db, username=callback.from_user.username or ""):
         await callback.answer("⛔ Нет доступа к админ-функциям.", show_alert=True)
         return
 
@@ -209,11 +224,11 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
         if managers:
             stats_text += "\nТоп менеджеров:\n"
             for mid, cnt in managers:
-                stats_text += f"- {format_user_link(mid)}: {cnt}\n"
+                stats_text += f"- {await get_username_by_telegram_id(db, mid)}: {cnt}\n"
         if masters:
             stats_text += "\nТоп мастеров:\n"
             for mid, cnt in masters:
-                stats_text += f"- {format_user_link(mid)}: {cnt}\n"
+                stats_text += f"- {await get_username_by_telegram_id(db, mid)}: {cnt}\n"
 
         await callback.message.answer(stats_text)
         await callback.answer()
@@ -234,7 +249,7 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
     if action == "orders":
         orders = await list_recent_orders(db, status=None, limit=20)
         await callback.message.answer(
-            _format_orders_list(orders, "Последние заявки (до 20, фильтр: all):"),
+            await _format_orders_list(db, orders, "Последние заявки (до 20, фильтр: all):"),
             reply_markup=build_admin_orders_filter_keyboard(),
         )
         await callback.answer()
@@ -245,7 +260,8 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
         status = None if status_token == "all" else status_token
         orders = await list_recent_orders(db, status=status, limit=20)
         await callback.message.answer(
-            _format_orders_list(
+            await _format_orders_list(
+                db,
                 orders,
                 f"Последние заявки (до 20, фильтр: {status_token}):",
             ),
@@ -323,7 +339,7 @@ async def admin_panel_callback(callback: CallbackQuery, db) -> None:
 @router.callback_query(lambda c: c.data and c.data.startswith("admin:add_role:"))
 async def admin_add_role_choice(callback: CallbackQuery, state: FSMContext, db) -> None:
     """Choose target role for secret-word invite."""
-    if not await _can_use_admin(callback.from_user.id, db):
+    if not await _can_use_admin(callback.from_user.id, db, username=callback.from_user.username or ""):
         await callback.answer("⛔ Нет доступа к админ-функциям.", show_alert=True)
         return
     if not callback.message:
@@ -353,7 +369,7 @@ async def admin_add_role_choice(callback: CallbackQuery, state: FSMContext, db) 
 @router.message(AddRoleFlow.waiting_username)
 async def admin_add_role_username(message: Message, state: FSMContext, db) -> None:
     """Generate one-time secret word for target username."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         await state.clear()
         return
@@ -396,7 +412,7 @@ async def admin_add_role_username(message: Message, state: FSMContext, db) -> No
 @router.message(Command("stats"))
 async def cmd_stats(message: Message, db) -> None:
     """Show extended analytics."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
@@ -418,12 +434,12 @@ async def cmd_stats(message: Message, db) -> None:
     if managers:
         stats_text += "\nТоп менеджеров:\n"
         for mid, cnt in managers:
-            stats_text += f"- {format_user_link(mid)}: {cnt}\n"
+            stats_text += f"- {await get_username_by_telegram_id(db, mid)}: {cnt}\n"
 
     if masters:
         stats_text += "\nТоп мастеров:\n"
         for mid, cnt in masters:
-            stats_text += f"- {format_user_link(mid)}: {cnt}\n"
+            stats_text += f"- {await get_username_by_telegram_id(db, mid)}: {cnt}\n"
 
     await message.answer(stats_text)
 
@@ -431,7 +447,7 @@ async def cmd_stats(message: Message, db) -> None:
 @router.message(Command("city_stats"))
 async def cmd_city_stats(message: Message, db) -> None:
     """Show city-level order distribution."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
@@ -449,7 +465,7 @@ async def cmd_city_stats(message: Message, db) -> None:
 @router.message(Command("orders"))
 async def cmd_orders(message: Message, db) -> None:
     """List latest orders with optional status filter."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
@@ -475,13 +491,21 @@ async def cmd_orders(message: Message, db) -> None:
         await message.answer("Заявки не найдены.")
         return
 
+    ids: list[int] = []
+    for order in orders:
+        if order.manager_id:
+            ids.append(int(order.manager_id))
+        if order.master_id:
+            ids.append(int(order.master_id))
+    usernames = await get_usernames_map_by_telegram_ids(db, ids)
+
     lines = [f"Последние заявки (до {limit}):"]
     for order in orders:
-        manager_link = format_user_link(order.manager_id)
-        master_link = format_user_link(order.master_id)
+        manager_name = usernames.get(int(order.manager_id), "-") if order.manager_id else "-"
+        master_name = usernames.get(int(order.master_id), "-") if order.master_id else "-"
         lines.append(
             f"#{order.id} | {_city_label(order.city)} | {order.date} {order.time} | {order.status} | "
-            f"mgr:{manager_link} | mst:{master_link}"
+            f"mgr:{manager_name} | mst:{master_name}"
         )
     await message.answer("\n".join(lines))
 
@@ -489,7 +513,7 @@ async def cmd_orders(message: Message, db) -> None:
 @router.message(Command("order"))
 async def cmd_order_detail(message: Message, db) -> None:
     """Show full details for one order."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
@@ -509,6 +533,9 @@ async def cmd_order_detail(message: Message, db) -> None:
         await message.answer("Заявка не найдена.")
         return
 
+    manager_username = await get_username_by_telegram_id(db, order.manager_id)
+    master_username = await get_username_by_telegram_id(db, order.master_id)
+
     await message.answer(
         f"Заявка #{order.id}\n"
         f"Город: {_city_label(order.city)}\n"
@@ -519,9 +546,9 @@ async def cmd_order_detail(message: Message, db) -> None:
         f"Условия: {order.conditions}\n"
         f"Комментарий: {order.comment or '-'}\n"
         f"Контакт клиента: {order.client_contact or '-'}\n"
-        f"Контакт менеджера: {format_user_link(order.manager_id, 'написать менеджеру')}\n"
-        f"Менеджер TG: {format_user_link(order.manager_id)}\n"
-        f"Мастер TG: {format_user_link(order.master_id)}\n"
+        f"Контакт менеджера: {manager_username}\n"
+        f"Менеджер: {manager_username}\n"
+        f"Мастер: {master_username}\n"
         f"Статус: {order.status}\n"
         f"Создана: {order.created_at.isoformat() if order.created_at else '-'}"
     )
@@ -530,7 +557,7 @@ async def cmd_order_detail(message: Message, db) -> None:
 @router.message(Command("set_status"))
 async def cmd_set_status(message: Message, db) -> None:
     """Change order status."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
@@ -564,13 +591,13 @@ async def cmd_set_status(message: Message, db) -> None:
 @router.message(Command("reassign"))
 async def cmd_reassign(message: Message, db) -> None:
     """Assign or unassign master for an order."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
     if len(parts) != 3:
-        await message.answer("Формат: /reassign [order_id] [master_tg_id|@username|none]")
+        await message.answer("Формат: /reassign [order_id] [@username|none]")
         return
 
     try:
@@ -590,39 +617,28 @@ async def cmd_reassign(message: Message, db) -> None:
         await message.answer(f"Заявка #{order_id}: мастер снят, статус -> published.")
         return
 
-    master_telegram_id: int
-    master_username = ""
-    if raw_master.startswith("@"):
-        master_username = normalize_username(raw_master)
-        if not master_username:
-            await message.answer("Укажите корректный @username или telegram_id.")
-            return
-        user = await get_user_by_username(db, master_username)
-        if not user:
-            await message.answer(
-                f"Пользователь @{master_username} не найден в базе.\n"
-                "Пусть сначала нажмет /start в боте."
-            )
-            return
-        master_telegram_id = user.telegram_id
-    else:
-        try:
-            master_telegram_id = int(raw_master)
-        except ValueError:
-            await message.answer("master_tg_id должен быть числом, @username или none.")
-            return
+    master_telegram_id, master_username = await resolve_user_selector(db, raw_master)
+    if not master_username:
+        await message.answer("Укажите мастера в формате @username или none.")
+        return
+    if master_telegram_id is None:
+        await message.answer(
+            f"Пользователь @{master_username} не найден в базе.\n"
+            "Пусть сначала нажмет /start в боте."
+        )
+        return
 
     await ensure_user(db, master_telegram_id, role=ROLES["master"], username=master_username)
     await assign_master(db, order, master_telegram_id)
     await message.answer(
-        f"Заявка #{order_id}: назначен мастер {format_user_link(master_telegram_id)}, статус -> assigned."
+        f"Заявка #{order_id}: назначен мастер @{master_username}, статус -> assigned."
     )
 
 
 @router.message(Command("export_basic"))
 async def cmd_export_basic(message: Message, db) -> None:
     """Send basic CSV export."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
@@ -634,7 +650,7 @@ async def cmd_export_basic(message: Message, db) -> None:
 @router.message(Command("export_full"))
 async def cmd_export_full(message: Message, db) -> None:
     """Send full CSV export."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
@@ -646,7 +662,7 @@ async def cmd_export_full(message: Message, db) -> None:
 @router.message(Command("users"))
 async def cmd_users(message: Message, db) -> None:
     """List users with role and status filters."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
@@ -690,7 +706,7 @@ async def cmd_users(message: Message, db) -> None:
     ]
     for user in users:
         lines.append(
-            f"- tg:{user.telegram_id} | role:{user.role or '-'} | "
+            f"- user:{username_with_at(user.username)} | role:{user.role or '-'} | "
             f"active:{'yes' if user.is_active else 'no'} | city:{user.city or '-'}"
         )
 
@@ -699,38 +715,27 @@ async def cmd_users(message: Message, db) -> None:
 
 @router.message(Command("set_role"))
 async def cmd_set_role(message: Message, db) -> None:
-    """Assign role to a user by telegram id or username."""
-    if not await _can_use_admin(message.from_user.id, db):
+    """Assign role to a user by username."""
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
     if len(parts) != 3:
-        await message.answer("Формат: /set_role [telegram_id|@username] [admin|manager|master]")
+        await message.answer("Формат: /set_role [@username] [admin|manager|master]")
         return
 
     selector = parts[1].strip()
-    telegram_id: int
-    username = ""
-    if selector.startswith("@"):
-        username = normalize_username(selector)
-        if not username:
-            await message.answer("Укажите корректный @username или telegram_id.")
-            return
-        user = await get_user_by_username(db, username)
-        if not user:
-            await message.answer(
-                f"Пользователь @{username} не найден в базе.\n"
-                "Пусть сначала нажмет /start в боте."
-            )
-            return
-        telegram_id = user.telegram_id
-    else:
-        try:
-            telegram_id = int(selector)
-        except ValueError:
-            await message.answer("Укажите telegram_id числом или @username.")
-            return
+    telegram_id, username = await resolve_user_selector(db, selector)
+    if not username:
+        await message.answer("Укажите пользователя в формате @username.")
+        return
+    if telegram_id is None:
+        await message.answer(
+            f"Пользователь @{username} не найден в базе.\n"
+            "Пусть сначала нажмет /start в боте."
+        )
+        return
 
     role = parts[2].lower()
     if role not in ROLES.values():
@@ -738,25 +743,31 @@ async def cmd_set_role(message: Message, db) -> None:
         return
 
     await set_role(db, telegram_id, role, username=username)
-    await message.answer(f"Роль {role} назначена пользователю {format_user_link(telegram_id)}.")
+    await message.answer(f"Роль {role} назначена пользователю @{username}.")
 
 
 @router.message(Command("set_active"))
 async def cmd_set_active(message: Message, db) -> None:
-    """Enable or disable a user account."""
-    if not await _can_use_admin(message.from_user.id, db):
+    """Enable or disable a user account by username."""
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
     if len(parts) != 3:
-        await message.answer("Формат: /set_active [telegram_id] [on|off]")
+        await message.answer("Формат: /set_active [@username] [on|off]")
         return
 
-    try:
-        telegram_id = int(parts[1])
-    except ValueError:
-        await message.answer("telegram_id должен быть числом.")
+    selector = parts[1].strip()
+    telegram_id, username = await resolve_user_selector(db, selector)
+    if not username:
+        await message.answer("Укажите пользователя в формате @username.")
+        return
+    if telegram_id is None:
+        await message.answer(
+            f"Пользователь @{username} не найден в базе.\n"
+            "Пусть сначала нажмет /start в боте."
+        )
         return
 
     mode = parts[2].lower()
@@ -771,14 +782,14 @@ async def cmd_set_active(message: Message, db) -> None:
         return
 
     await message.answer(
-        f"Пользователь {format_user_link(user.telegram_id)}: active={'yes' if user.is_active else 'no'}."
+        f"Пользователь {username_with_at(user.username)}: active={'yes' if user.is_active else 'no'}."
     )
 
 
 @router.message(Command("broadcast"))
 async def cmd_broadcast(message: Message, db) -> None:
     """Send admin broadcast to users by role."""
-    if not await _can_use_admin(message.from_user.id, db):
+    if not await _can_use_admin(message.from_user.id, db, username=message.from_user.username or ""):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 

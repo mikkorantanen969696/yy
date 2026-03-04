@@ -35,6 +35,8 @@ class Settings(BaseSettings):
 
     # Admin Telegram IDs (comma-separated)
     admin_ids: str = ""
+    # Admin usernames (comma-separated, with or without @)
+    admin_usernames: str = ""
 
     # Group chat and per-city topic thread IDs
     group_chat_id: int = 0
@@ -77,6 +79,19 @@ class Settings(BaseSettings):
                 out.append(int(p))
             except ValueError:
                 continue
+        return out
+
+    def get_admin_usernames(self) -> List[str]:
+        """Parse admin usernames from comma-separated string."""
+        raw = (self.admin_usernames or "").strip()
+        if not raw:
+            return []
+        out: List[str] = []
+        for part in [p.strip() for p in raw.split(",") if p.strip()]:
+            normalized = part[1:] if part.startswith("@") else part
+            normalized = normalized.lower().strip()
+            if normalized:
+                out.append(normalized)
         return out
 
     def get_webhook_path(self) -> str:

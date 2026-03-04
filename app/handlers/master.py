@@ -8,23 +8,25 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from app.services.orders import list_orders_by_master
-from app.services.users import ensure_user, has_role
+from app.services.users import ensure_user, get_usernames_map_by_telegram_ids, has_role, username_with_at
 from app.utils.constants import ROLES
-from app.utils.text import format_user_link
 
 router = Router()
 
 
-def _format_orders(orders) -> str:
+async def _format_orders(db, orders) -> str:
     """Format orders list for message."""
     if not orders:
         return "👷 Роль собеседника: мастер\n📭 У вас пока нет заказов."
 
+    ids = [int(order.manager_id) for order in orders if order.manager_id]
+    usernames = await get_usernames_map_by_telegram_ids(db, ids)
+
     lines = ["👷 Роль собеседника: мастер", "🧰 Ваши последние заказы:"]
     for order in orders[-20:]:
-        manager_link = format_user_link(order.manager_id, "менеджер")
+        manager_name = usernames.get(int(order.manager_id), "-") if order.manager_id else "-"
         lines.append(
-            f"#{order.id} | {order.city} | {order.date} {order.time} | {order.status} | {manager_link}"
+            f"#{order.id} | {order.city} | {order.date} {order.time} | {order.status} | менеджер: {manager_name}"
         )
     return "\n".join(lines)
 
@@ -54,7 +56,7 @@ async def cmd_my_jobs(message: Message, db) -> None:
         return
 
     orders = await list_orders_by_master(db, user.telegram_id)
-    await message.answer(_format_orders(orders))
+    await message.answer(await _format_orders(db, orders))
 
 
 @router.message(Command("my_stats"))
@@ -71,6 +73,7 @@ async def cmd_my_stats(message: Message, db) -> None:
     await message.answer(
         f"👷 Роль собеседника: мастер\n"
         f"📊 Моя статистика:\n"
+        f"Username: {username_with_at(user.username)}\n"
         f"Всего заказов: {total}\n"
         f"Завершено: {completed}"
     )

@@ -82,7 +82,7 @@ OWNER_GUIDE_TEXT = (
     "- master: выполняют заказы и грузят фото\n\n"
     "3) Первичный вход владельца\n"
     "1. Откройте бота и нажмите /start\n"
-    "2. Если ваш Telegram ID в ADMIN_IDS, бот выдаст роль admin автоматически\n"
+    "2. Если у вас есть админ-доступ в настройках бота, роль admin выдастся автоматически\n"
     "3. Откройте /admin\n\n"
     "4) Как выдать роль новому сотруднику по секретному слову\n"
     "1. Войдите в /admin\n"
@@ -141,7 +141,12 @@ class LoginFlow(StatesGroup):
 @router.message(CommandStart())
 async def cmd_start(message: Message, db) -> None:
     """Welcome message and short instructions."""
-    if is_admin(message.from_user.id, settings.get_admin_ids()):
+    if is_admin(
+        message.from_user.id,
+        settings.get_admin_ids(),
+        username=message.from_user.username or "",
+        admin_usernames=settings.get_admin_usernames(),
+    ):
         await ensure_user(
             db,
             message.from_user.id,

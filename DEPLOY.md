@@ -16,7 +16,7 @@ Required:
 - `BOT_TOKEN`
 - `DATABASE_URL`
 - `RUN_MODE` (`polling` or `webhook`)
-- `ADMIN_IDS`
+- `ADMIN_USERNAMES` (recommended)
 - `GROUP_CHAT_ID`
 
 Optional for Postgres SSL:
@@ -84,5 +84,5 @@ Before production use, verify:
 
 ## 8. Operational Notes
 
-- Current FK mapping uses Telegram IDs (`users.telegram_id`) for manager/master links.
+- User-facing operations use usernames (`@username`); internal delivery to Telegram still uses technical IDs.
 - If you already have an old DB created with previous schema, recreate DB or run migration before switching to PostgreSQL.
