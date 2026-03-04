@@ -11,6 +11,14 @@ from app.models.user import User
 from app.utils.constants import ROLES
 
 
+def normalize_username(raw: str) -> str:
+    """Normalize Telegram username for lookup/storage."""
+    value = (raw or "").strip()
+    if value.startswith("@"):
+        value = value[1:]
+    return value.lower()
+
+
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> User | None:
     """Fetch a user by Telegram ID."""
     stmt = select(User).where(
@@ -20,16 +28,37 @@ async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> Us
     return result.scalar_one_or_none()
 
 
-async def ensure_user(session: AsyncSession, telegram_id: int, role: str = "") -> User:
+async def get_user_by_username(session: AsyncSession, username: str) -> User | None:
+    """Fetch a user by Telegram username."""
+    normalized = normalize_username(username)
+    if not normalized:
+        return None
+    result = await session.execute(select(User).where(User.username == normalized))
+    return result.scalar_one_or_none()
+
+
+async def ensure_user(
+    session: AsyncSession,
+    telegram_id: int,
+    role: str = "",
+    username: str = "",
+) -> User:
     """Ensure user exists. Optionally set role if provided."""
+    normalized_username = normalize_username(username)
     user = await get_user_by_telegram_id(session, telegram_id)
     if user:
+        changed = False
         if role and user.role != role:
             user.role = role
+            changed = True
+        if normalized_username and user.username != normalized_username:
+            user.username = normalized_username
+            changed = True
+        if changed:
             await session.commit()
         return user
 
-    user = User(telegram_id=telegram_id, role=role or "", city="")
+    user = User(telegram_id=telegram_id, username=normalized_username, role=role or "", city="")
     session.add(user)
     try:
         await session.commit()
@@ -40,19 +69,25 @@ async def ensure_user(session: AsyncSession, telegram_id: int, role: str = "") -
         await session.rollback()
         existing = await get_user_by_telegram_id(session, telegram_id)
         if existing:
+            changed = False
             if role and existing.role != role:
                 existing.role = role
+                changed = True
+            if normalized_username and existing.username != normalized_username:
+                existing.username = normalized_username
+                changed = True
+            if changed:
                 await session.commit()
-                await session.refresh(existing)
+            await session.refresh(existing)
             return existing
         raise
 
 
-async def set_role(session: AsyncSession, telegram_id: int, role: str) -> User:
+async def set_role(session: AsyncSession, telegram_id: int, role: str, username: str = "") -> User:
     """Set role for a user and create user if needed."""
     if role not in ROLES.values():
         raise ValueError("Unknown role")
-    user = await ensure_user(session, telegram_id)
+    user = await ensure_user(session, telegram_id, username=username)
     user.role = role
     user.is_active = True
     await session.commit()

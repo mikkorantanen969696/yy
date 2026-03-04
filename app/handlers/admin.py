@@ -33,6 +33,7 @@ from app.services.users import (
     count_users,
     count_users_by_role,
     ensure_user,
+    get_user_by_username,
     has_role,
     is_admin,
     list_users,
@@ -92,9 +93,9 @@ def _usage() -> str:
         "/orders [status|all] [limit] - последние заявки\n"
         "/order [id] - детальная заявка\n"
         "/set_status [order_id] [status] - сменить статус\n"
-        "/reassign [order_id] [master_tg_id|none] - назначить/снять мастера\n"
+        "/reassign [order_id] [master_tg_id|@username|none] - назначить/снять мастера\n"
         "/users [role|all] [active|inactive|all] [limit] - пользователи\n"
-        "/set_role [telegram_id] [admin|manager|master] - назначить роль\n"
+        "/set_role [telegram_id|@username] [admin|manager|master] - назначить роль\n"
         "/set_active [telegram_id] [on|off] - активировать/деактивировать\n"
         "/broadcast [role|all] [текст] - рассылка пользователям\n"
         "/export_basic - экспорт CSV (основной)\n"
@@ -569,7 +570,7 @@ async def cmd_reassign(message: Message, db) -> None:
 
     parts = (message.text or "").strip().split()
     if len(parts) != 3:
-        await message.answer("Формат: /reassign [order_id] [master_tg_id|none]")
+        await message.answer("Формат: /reassign [order_id] [master_tg_id|@username|none]")
         return
 
     try:
@@ -583,22 +584,38 @@ async def cmd_reassign(message: Message, db) -> None:
         await message.answer("Заявка не найдена.")
         return
 
-    raw_master = parts[2].lower()
-    if raw_master == "none":
+    raw_master = parts[2].strip()
+    if raw_master.lower() == "none":
         await unassign_master(db, order)
         await message.answer(f"Заявка #{order_id}: мастер снят, статус -> published.")
         return
 
-    try:
-        master_telegram_id = int(raw_master)
-    except ValueError:
-        await message.answer("master_tg_id должен быть числом или none.")
-        return
+    master_telegram_id: int
+    master_username = ""
+    if raw_master.startswith("@"):
+        master_username = normalize_username(raw_master)
+        if not master_username:
+            await message.answer("Укажите корректный @username или telegram_id.")
+            return
+        user = await get_user_by_username(db, master_username)
+        if not user:
+            await message.answer(
+                f"Пользователь @{master_username} не найден в базе.\n"
+                "Пусть сначала нажмет /start в боте."
+            )
+            return
+        master_telegram_id = user.telegram_id
+    else:
+        try:
+            master_telegram_id = int(raw_master)
+        except ValueError:
+            await message.answer("master_tg_id должен быть числом, @username или none.")
+            return
 
-    await ensure_user(db, master_telegram_id, role=ROLES["master"])
+    await ensure_user(db, master_telegram_id, role=ROLES["master"], username=master_username)
     await assign_master(db, order, master_telegram_id)
     await message.answer(
-        f"Заявка #{order_id}: назначен мастер {master_telegram_id}, статус -> assigned."
+        f"Заявка #{order_id}: назначен мастер {format_user_link(master_telegram_id)}, статус -> assigned."
     )
 
 
@@ -682,28 +699,45 @@ async def cmd_users(message: Message, db) -> None:
 
 @router.message(Command("set_role"))
 async def cmd_set_role(message: Message, db) -> None:
-    """Assign role to a user by telegram id."""
+    """Assign role to a user by telegram id or username."""
     if not await _can_use_admin(message.from_user.id, db):
         await message.answer("⛔ Нет доступа к админ-функциям.")
         return
 
     parts = (message.text or "").strip().split()
     if len(parts) != 3:
-        await message.answer("Формат: /set_role [telegram_id] [admin|manager|master]")
+        await message.answer("Формат: /set_role [telegram_id|@username] [admin|manager|master]")
         return
 
-    try:
-        telegram_id = int(parts[1])
-    except ValueError:
-        await message.answer("telegram_id должен быть числом.")
-        return
+    selector = parts[1].strip()
+    telegram_id: int
+    username = ""
+    if selector.startswith("@"):
+        username = normalize_username(selector)
+        if not username:
+            await message.answer("Укажите корректный @username или telegram_id.")
+            return
+        user = await get_user_by_username(db, username)
+        if not user:
+            await message.answer(
+                f"Пользователь @{username} не найден в базе.\n"
+                "Пусть сначала нажмет /start в боте."
+            )
+            return
+        telegram_id = user.telegram_id
+    else:
+        try:
+            telegram_id = int(selector)
+        except ValueError:
+            await message.answer("Укажите telegram_id числом или @username.")
+            return
 
     role = parts[2].lower()
     if role not in ROLES.values():
         await message.answer("Роль должна быть admin, manager или master.")
         return
 
-    await set_role(db, telegram_id, role)
+    await set_role(db, telegram_id, role, username=username)
     await message.answer(f"Роль {role} назначена пользователю {format_user_link(telegram_id)}.")
 
 

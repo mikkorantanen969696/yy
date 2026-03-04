@@ -32,7 +32,7 @@ def _format_orders(orders) -> str:
 @router.message(Command("profile"))
 async def cmd_profile(message: Message, db) -> None:
     """Master profile."""
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     if not has_role(user, ROLES["master"]):
         await message.answer("⛔ Нет доступа. Роль мастера не назначена.")
         return
@@ -48,7 +48,7 @@ async def cmd_profile(message: Message, db) -> None:
 @router.message(Command("my_jobs"))
 async def cmd_my_jobs(message: Message, db) -> None:
     """List master orders."""
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     if not has_role(user, ROLES["master"]):
         await message.answer("⛔ Нет доступа. Роль мастера не назначена.")
         return
@@ -60,7 +60,7 @@ async def cmd_my_jobs(message: Message, db) -> None:
 @router.message(Command("my_stats"))
 async def cmd_my_stats(message: Message, db) -> None:
     """Basic master stats."""
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     if not has_role(user, ROLES["master"]):
         await message.answer("⛔ Нет доступа. Роль мастера не назначена.")
         return

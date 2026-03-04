@@ -79,9 +79,43 @@ async def _ensure_postgres_bigint_ids(conn) -> None:
     )
 
 
+async def _ensure_postgres_username_column(conn) -> None:
+    """Add users.username column/index for legacy Postgres schema."""
+    await conn.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'users'
+                      AND column_name = 'username'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN username VARCHAR(64) DEFAULT '';
+                END IF;
+            END $$;
+            """
+        )
+    )
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_username ON users (username);"))
+
+
+async def _ensure_sqlite_username_column(conn) -> None:
+    """Add users.username column/index for legacy SQLite schema."""
+    result = await conn.execute(text("PRAGMA table_info(users);"))
+    columns = {row[1] for row in result.fetchall()}
+    if "username" not in columns:
+        await conn.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR(64) DEFAULT '';"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_username ON users (username);"))
+
+
 async def init_db() -> None:
     """Create tables if they do not exist and patch legacy Postgres schema."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         if conn.dialect.name == "postgresql":
             await _ensure_postgres_bigint_ids(conn)
+            await _ensure_postgres_username_column(conn)
+        elif conn.dialect.name == "sqlite":
+            await _ensure_sqlite_username_column(conn)

@@ -33,7 +33,7 @@ def _format_orders(orders) -> str:
 @router.message(Command("manager"))
 async def cmd_manager(message: Message, db) -> None:
     """Manager panel."""
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
@@ -52,7 +52,7 @@ async def cmd_manager(message: Message, db) -> None:
 @router.message(Command("my_orders"))
 async def cmd_my_orders(message: Message, db) -> None:
     """List manager orders."""
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
@@ -64,7 +64,7 @@ async def cmd_my_orders(message: Message, db) -> None:
 @router.message(Command("my_stats"))
 async def cmd_my_stats(message: Message, db) -> None:
     """Basic manager stats."""
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
@@ -83,7 +83,7 @@ async def cmd_my_stats(message: Message, db) -> None:
 @router.message(Command("my_export_basic"))
 async def cmd_my_export_basic(message: Message, db) -> None:
     """Send manager-scoped basic CSV export."""
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return
@@ -96,7 +96,7 @@ async def cmd_my_export_basic(message: Message, db) -> None:
 @router.message(Command("my_export_full"))
 async def cmd_my_export_full(message: Message, db) -> None:
     """Managers are restricted to basic export only."""
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     if not (has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())):
         await message.answer("⛔ Нет доступа. Роль менеджера не назначена.")
         return

@@ -198,7 +198,7 @@ async def _edit_form_message(bot, chat_id: int, state: FSMContext, prompt: str, 
 
 async def _ensure_manager(message: Message, db) -> bool:
     """Managers and admins can create orders."""
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     return has_role(user, ROLES["manager"]) or is_admin(message.from_user.id, settings.get_admin_ids())
 
 
@@ -564,7 +564,7 @@ async def form_submit(callback: CallbackQuery, state: FSMContext, db) -> None:
 @router.callback_query(lambda c: c.data and c.data.startswith("resp:"))
 async def master_respond(callback: CallbackQuery, db) -> None:
     """Master responds from group message."""
-    user = await ensure_user(db, callback.from_user.id)
+    user = await ensure_user(db, callback.from_user.id, username=callback.from_user.username or "")
     if not has_role(user, ROLES["master"]):
         await callback.answer("⛔ Нет доступа.", show_alert=True)
         return

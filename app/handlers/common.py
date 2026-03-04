@@ -142,7 +142,12 @@ class LoginFlow(StatesGroup):
 async def cmd_start(message: Message, db) -> None:
     """Welcome message and short instructions."""
     if is_admin(message.from_user.id, settings.get_admin_ids()):
-        await ensure_user(db, message.from_user.id, role=ROLES["admin"])
+        await ensure_user(
+            db,
+            message.from_user.id,
+            role=ROLES["admin"],
+            username=message.from_user.username or "",
+        )
         await message.answer(
             "👋 Доступ администратора подтвержден.\n"
             "Ваша роль: admin.\n"
@@ -150,7 +155,7 @@ async def cmd_start(message: Message, db) -> None:
         )
         return
 
-    user = await ensure_user(db, message.from_user.id)
+    user = await ensure_user(db, message.from_user.id, username=message.from_user.username or "")
     role = user.role or "не назначена"
     await message.answer(
         "👋 Добро пожаловать!\n"
@@ -207,7 +212,12 @@ async def role_login_secret(message: Message, state: FSMContext, db) -> None:
         )
         return
 
-    user = await set_role(db, message.from_user.id, invite.role)
+    user = await set_role(
+        db,
+        message.from_user.id,
+        invite.role,
+        username=message.from_user.username or "",
+    )
     await state.clear()
     await message.answer(
         "✅ Роль активирована.\n"
